@@ -1,7 +1,7 @@
 # aBeam — marketing site
 
 **By your side, Beyond the shore.**
-Single-page marketing site for aBeam, an on-demand boat & yacht concierge serving San Francisco's city marinas.
+Single-page marketing site for aBeam, an on-demand boat & yacht concierge for captains, crews and owners at San Francisco's city marinas. Clients text a specific need; aBeam confirms what it can do, by when, and for what fee.
 
 Plain HTML / CSS / JavaScript. No build step, no framework, no backend required.
 
@@ -23,10 +23,10 @@ Plain HTML / CSS / JavaScript. No build step, no framework, no backend required.
 
 1. **Phone number** — `phoneDisplay` and `phoneE164` (the placeholder is a 555 number). Every "Text us" button opens a prefilled text to this number.
 2. **Email** — `email`.
-3. **Starting price** — `startingPrice` (default 75). The page renders "Starting at $75 per outing".
+3. **Starting price** — `startingPrice` (default 75). The page renders "Starting at $75 per visit" for pre-departure prep; everything else is quoted per request.
 4. **Marina status** — each entry in `MARINAS` has `status: 'soon'`. Flip one to `'serving'` **only after vendor/dock access is confirmed at that marina**. That single change updates the pin colour, the popup, and the list.
 5. **Social links** — `social` (placeholders point to `#`).
-6. **Booking form delivery** — by default the form composes a text message and opens the phone's SMS app. To receive submissions by email instead, set `formEndpoint` to a Formspree / Basin / Getform-style URL.
+6. **Request form delivery** — by default the form composes a text message and opens the phone's SMS app. To receive submissions by email instead, set `formEndpoint` to a Formspree / Basin / Getform-style URL.
 
 ## Run it locally
 

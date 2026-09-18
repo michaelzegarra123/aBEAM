@@ -99,13 +99,13 @@ function composeMessage(data) {
   const marina = MARINAS.find((m) => m.id === data.marina);
   const marinaName = marina ? marina.name : (data.marina === 'other' ? 'Other / not sure yet' : data.marina);
   const lines = [
-    `Ready & Go request — ${data.name}`,
+    `aBeam request — ${data.name}`,
     `Phone: ${data.phone}`,
     `Marina: ${marinaName}`,
     `Boat / slip: ${data.boat}`,
-    `Off the dock: ${formatWhen(data.datetime)}`,
+    `Needed by: ${formatWhen(data.datetime)}`,
   ];
-  if (data.notes) lines.push(`Notes: ${data.notes}`);
+  if (data.notes) lines.push(`Request: ${data.notes}`);
   return lines.join('\n');
 }
 
@@ -147,7 +147,7 @@ if (form) {
       form.reset();
       return;
     }
-    const required = ['name', 'phone', 'marina', 'boat', 'datetime'];
+    const required = ['name', 'phone', 'marina', 'boat', 'datetime', 'notes'];
     let firstBad = null;
     required.forEach((key) => {
       const input = form.elements[key];

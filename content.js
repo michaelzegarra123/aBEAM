@@ -15,9 +15,9 @@ export const CONFIG = {
   email: 'hello@abeam.example',
 
   // The message that is pre-filled when someone taps "Text us".
-  smsBody: "Hi aBeam, it's [name]. Ready & Go for [boat name] at [marina], slip [slip]. Off the dock at [date/time]. Please load: [ice, drinks, groceries].",
+  smsBody: "Hi aBeam, it's [name]. [Boat name] at [marina], slip [slip]. We need: [what the boat needs]. By [date/time].",
 
-  // Pricing. The page renders "Starting at $<startingPrice> per outing".
+  // Pricing. The page renders "Starting at $<startingPrice> per visit" (pre-departure prep).
   // The brief's anchor range is $75–150 depending on boat length.
   startingPrice: 75,
   priceRangeLow: 75,
@@ -96,28 +96,28 @@ export const HOTSPOTS = [
     eyebrow: 'Detailing',
     title: 'Washed, polished, and the brightwork seen to.',
     tooltip: 'Salt haze on the gelcoat again. Leave it with us.',
-    body: 'A season of westerlies leaves salt in every seam and a grey film on the gelcoat. We wash and wax the topsides, bring the brightwork back and detail the interior down to the lockers. On its own, or with your next Ready & Go.',
-    cta: { label: 'Book detailing', href: '#book' },
+    body: 'A season of westerlies leaves salt in every seam and a grey film on the gelcoat. We wash and wax the topsides, bring the brightwork back and detail the interior down to the lockers. On its own, or with your next pre-departure prep.',
+    cta: { label: 'Request detailing', href: '#book' },
   },
   {
     zone: 'deck',
     label: 'Deck',
-    service: 'Ready & Go prep',
-    eyebrow: 'Ready & Go prep',
+    service: 'Pre-departure prep',
+    eyebrow: 'Pre-departure prep',
     title: 'Lines flaked, fenders set, deck wiped.',
     tooltip: 'Deck wiped, lines flaked, trash ashore. Nothing for you to step over.',
-    body: 'Before every outing we set fenders and dock lines for your slip, wipe the deck and cockpit, take the trash off and run through the safety gear: life jackets, flares, extinguisher, propane. Then we text you it’s ready and step off the dock.',
-    cta: { label: 'Book Ready & Go', href: '#book' },
+    body: 'Ask for pre-departure prep and we set fenders and dock lines for your slip, wipe the deck and cockpit, take the trash off and run through the safety gear: life jackets, flares, extinguisher, propane. Then we text you it’s ready and step off the dock.',
+    cta: { label: 'Request prep', href: '#book' },
   },
   {
     zone: 'cabin',
     label: 'Cabin',
-    service: 'Ready & Go prep',
-    eyebrow: 'Ready & Go prep',
+    service: 'Pre-departure prep',
+    eyebrow: 'Pre-departure prep',
     title: 'Ice in, water topped, galley stocked.',
     tooltip: 'Ice in the box, drinks cold, groceries stowed. Nothing to carry down.',
     body: 'Text us a list the morning of and it’s aboard before you are: ice in the cooler, drinks cold, groceries stowed, fresh water topped off, cabin aired and wiped down.',
-    cta: { label: 'Book Ready & Go', href: '#book' },
+    cta: { label: 'Request provisioning', href: '#book' },
   },
   {
     zone: 'engine',
@@ -126,7 +126,7 @@ export const HOTSPOTS = [
     eyebrow: 'Repairs & Maintenance',
     title: 'We look first. We fix if asked.',
     tooltip: 'Oil’s a shade dark. Noted. Say the word and we’ll see to it.',
-    body: 'During Ready & Go we check oil level and color, battery reading and bilge. If anything looks off we tell you at once and stop there. Repairs happen only when you ask: our own repair team, or a trusted local marine mechanic we know.',
+    body: 'During pre-departure prep we check oil level and color, battery reading and bilge. If anything looks off we tell you at once and stop there. Repairs happen only when you ask: our own repair team, or a trusted local marine mechanic we know.',
     cta: { label: 'Ask about repairs', href: '#services' },
   },
 ];
@@ -137,9 +137,9 @@ export const COPY_UI = {
   activateDesktop: 'Click to zoom',
   activateDone: 'Done',
   popupCtaSoon: 'Get on the list',
-  popupCtaServing: 'Book Ready & Go',
+  popupCtaServing: 'Send a request',
   berthsSuffix: 'berths',
-  formSuccess: 'Got it. We’ll text you back with a ready-by time. If anything needs a decision, we’ll ask before we act. Finish your coffee. The dock is handled.',
+  formSuccess: 'Got it. We’ll text you back with what we can do and when. If anything needs a decision, we’ll ask before we act.',
   formComposing: 'Opening your messages with the details filled in. Just hit send.',
   formErrorRequired: 'We’ll need this to get started.',
   formCopy: 'Copy message',
