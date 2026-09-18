@@ -127,3 +127,20 @@ Primary: Busy professional boat owners in San Francisco (day-sailors, weekend-sa
 convenience and speed over doing it themselves.
 Secondary: Yacht owners, marina residents, and charter companies wanting broader detailing/repairs/
 management support.
+
+═══════════════════════════════════
+ADDENDUM — CLIENT DIRECTION AFTER THE FIRST PREVIEW (2026-09-18)
+═══════════════════════════════════
+These override anything above where they conflict.
+- Look: "reliable, they know what they're doing, don't do too much." Restraint over flourish.
+- No outings. aBeam does not sell trips or outings; nothing on the site says "book an outing" or "per outing".
+- Request-driven: captains, crews and owners text a specific need; aBeam confirms what it can do, by when, and
+  the fee; if it's outside what aBeam does, it says so and points to someone who does it well.
+- One client at a time, quoted per request. No fixed packages.
+- No detailing (yet).
+- Mostly shore-side: aBeam does the land-side work (provisions, parts, returns and refunds, errands, vendor
+  coordination) so crews can stay on the boat.
+- Repairs & maintenance: aBeam flags what it notices and coordinates a trusted local vendor; it does not repair
+  and has no repair team.
+- Services on the page: Concierge · Trip management · Repairs & Maintenance (flag and coordinate).
+- "Ready & Go" is not used as a name on the page.
