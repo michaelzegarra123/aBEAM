@@ -411,6 +411,8 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     btn.setAttribute('aria-label', `${h.label}: ${h.service}`);
     btn.innerHTML = `<span class="hotspot-dot" aria-hidden="true"></span><span class="hotspot-tip" role="tooltip">${h.tooltip}</span>`;
     btn.addEventListener('click', (ev) => { ev.stopPropagation(); selectZone(zone); });
+    btn.addEventListener('focus', () => btn.classList.add('is-focused'));
+    btn.addEventListener('blur', () => btn.classList.remove('is-focused'));
     const obj = new CSS2DObject(btn);
     obj.position.set(p[0], p[1], p[2]);
     boat.add(obj);

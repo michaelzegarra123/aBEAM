@@ -37,7 +37,7 @@
   box-shadow: 0 0 0 3px rgba(196,136,79,.95), 0 0 0 9px rgba(196,136,79,.22), 0 2px 8px rgba(0,0,0,.35);
   transition: transform var(--dur) var(--ease), background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.hotspot:hover .hotspot-dot, .hotspot:focus-visible .hotspot-dot, .hotspot.is-selected .hotspot-dot {
+.hotspot:hover .hotspot-dot, .hotspot:focus-visible .hotspot-dot, .hotspot.is-focused .hotspot-dot, .hotspot.is-selected .hotspot-dot {
   background: var(--teak); transform: scale(1.18);
   box-shadow: 0 0 0 3px #fff, 0 0 0 9px rgba(255,255,255,.18), 0 2px 8px rgba(0,0,0,.35);
 }
@@ -52,7 +52,7 @@
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease), visibility 0s linear var(--dur);
 }
-.hotspot:hover .hotspot-tip, .hotspot:focus-visible .hotspot-tip { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition-delay: 0s; }
+.hotspot:hover .hotspot-tip, .hotspot:focus-visible .hotspot-tip, .hotspot.is-focused .hotspot-tip { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition-delay: 0s; }
 .hotspot.tip-below .hotspot-tip { bottom: auto; top: calc(100% + 2px); transform: translate(-50%, -4px); }
 .hotspot.tip-below:hover .hotspot-tip, .hotspot.tip-below:focus-visible .hotspot-tip { transform: translate(-50%, 0); }
 .hotspot.tip-left .hotspot-tip { left: -6px; transform: translate(0, 4px); }
