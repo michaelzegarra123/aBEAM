@@ -24,7 +24,7 @@ export const CONFIG = {
   priceRangeHigh: 150,
 
   // Optional. Paste a Formspree / Basin / Getform-style endpoint URL to receive the
-  // booking form by email. Leave empty and the form composes a text message instead.
+  // request form by email. Leave empty and the form composes a text message instead.
   formEndpoint: '',
 
   serviceArea: 'South Beach Harbor · Pier 39 Marina · San Francisco Marina (Marina Green)',
@@ -136,10 +136,10 @@ export const COPY_UI = {
   activateTouch: 'Tap to explore',
   activateDesktop: 'Click to zoom',
   activateDone: 'Done',
-  popupCtaSoon: 'Get on the list',
+  popupCtaSoon: 'Ask about timing',
   popupCtaServing: 'Send a request',
   berthsSuffix: 'berths',
-  formSuccess: 'Got it. We’ll text you back with what we can do and when. If anything needs a decision, we’ll ask before we act.',
+  formSuccess: 'Got it. We’ll text you back with what we can do, by when, and the fee. If anything needs a decision, we’ll ask before we act.',
   formComposing: 'Opening your messages with the details filled in. Just hit send.',
   formErrorRequired: 'We’ll need this to get started.',
   formCopy: 'Copy message',

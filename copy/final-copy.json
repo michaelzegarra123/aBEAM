@@ -1,13 +1,13 @@
 {
   "meta": {
     "seo_title": "aBeam — On-Demand Boat Concierge, San Francisco",
-    "seo_description": "Text aBeam the morning you want to go out. Your boat is fueled, provisioned, checked and ready at your San Francisco slip. Flat fee per outing.",
+    "seo_description": "Shore-side concierge and trip management for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs.",
     "tagline": "By your side, Beyond the shore"
   },
   "nav": {
     "links": [
       {
-        "label": "Three steps",
+        "label": "How it works",
         "href": "#how"
       },
       {
@@ -23,7 +23,7 @@
         "href": "#pricing"
       },
       {
-        "label": "Book",
+        "label": "Request",
         "href": "#book"
       }
     ],
@@ -31,16 +31,16 @@
   },
   "hero": {
     "eyebrow": "Boat concierge · San Francisco",
-    "headline": "Text us this morning. Sail this afternoon.",
-    "subhead": "One text, the morning of. When you reach the dock, your boat is fueled, provisioned, checked and ready, with a conditions brief already on your phone.",
+    "headline": "Text us what the boat needs. We’ll handle it.",
+    "subhead": "aBeam is a shore-side concierge for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs, from provisions and parts to a return chased or a slip at the next stop, and we do it on land so the crew can stay aboard.",
     "cta_primary": "Text us",
-    "cta_secondary": "Book an outing",
-    "micro": "Same-morning texts welcome. Launching at South Beach, Pier 39 and Marina Green."
+    "cta_secondary": "Send a request",
+    "micro": "Same-day requests welcome. Launching at South Beach, Pier 39 and Marina Green."
   },
   "showcase": {
     "eyebrow": "Around the boat",
     "headline": "One text covers the whole boat.",
-    "intro": "Orbit the boat and open a zone. Hull, deck, cabin, engine room: each has a service behind it, and the same small local team handles all of them.",
+    "intro": "Orbit the boat and open a zone. Deck, cabin, engine room, hull: each is something you can ask us for, most of it handled from the dock.",
     "hint": "Drag to orbit · Tap a marker or a chip",
     "activate_touch": "Tap to explore",
     "activate_desktop": "Click to zoom",
@@ -49,207 +49,207 @@
       {
         "zone": "whole",
         "label": "Whole boat",
-        "service": "Full Management",
-        "eyebrow": "Full Management",
-        "title": "The whole boat, off your calendar.",
-        "tooltip": "The calendar, the vendors, the upkeep. We'll keep it all in hand.",
-        "body": "Haul-out dates, bottom paint, the canvas shop, the rigger, the slip paperwork. We keep the calendar, coordinate the vendors and log every visit. The boat stays ready; you stay informed, without chasing anyone.",
-        "cta_label": "Ask about management"
+        "service": "Trip management",
+        "eyebrow": "Trip management",
+        "title": "The whole trip, coordinated.",
+        "tooltip": "Slips, fuel, provisions, vendors. We’ll keep the list; you keep the boat.",
+        "body": "Berths at the next stop, fuel and pump-out timing, provisioning by the day, vendors booked before you leave and chased while you’re out. One point of contact, every request logged.",
+        "cta_label": "Ask about trip management"
       },
       {
         "zone": "hull",
         "label": "Hull & exterior",
-        "service": "Detailing",
-        "eyebrow": "Detailing",
-        "title": "Washed, polished, and the brightwork seen to.",
-        "tooltip": "Salt haze on the gelcoat again. Leave it with us.",
-        "body": "A season of westerlies leaves salt in every seam and a grey film on the gelcoat. We wash and wax the topsides, bring the brightwork back and detail the interior down to the lockers. On its own, or with your next Ready & Go.",
-        "cta_label": "Book detailing"
+        "service": "Repairs & Maintenance",
+        "eyebrow": "Yard & vendor coordination",
+        "title": "Haul-out, bottom, rigging: booked and chased.",
+        "tooltip": "The yard wants a date. We’ll get one, and hold them to it.",
+        "body": "When the hull needs the yard, we get the quotes, book the slot and keep you posted until she’s back in the water. We coordinate; the yard does the work.",
+        "cta_label": "Ask about coordination"
       },
       {
         "zone": "deck",
         "label": "Deck",
-        "service": "Ready & Go prep",
-        "eyebrow": "Ready & Go prep",
-        "title": "Lines flaked, fenders set, deck wiped.",
-        "tooltip": "Deck wiped, lines flaked, trash ashore. Nothing for you to step over.",
-        "body": "Before every outing we set fenders and dock lines for your slip, wipe the deck and cockpit, take the trash off and run through the safety gear: life jackets, flares, extinguisher, propane. Then we text you it's ready and step off the dock.",
-        "cta_label": "Book Ready & Go"
+        "service": "Concierge",
+        "eyebrow": "Provisioning & deliveries",
+        "title": "Ice in, provisions handed aboard.",
+        "tooltip": "Ice, drinks, groceries, the part you’re waiting on. Handed over at the dock.",
+        "body": "Text a list and it arrives at the dock when you said: ice, drinks, groceries, parts, packages. We hand it aboard, and take the trash and empties off.",
+        "cta_label": "Request provisioning"
       },
       {
         "zone": "cabin",
         "label": "Cabin",
-        "service": "Ready & Go prep",
-        "eyebrow": "Ready & Go prep",
-        "title": "Ice in, water topped, galley stocked.",
-        "tooltip": "Ice in the box, drinks cold, groceries stowed. Nothing to carry down.",
-        "body": "Text us a list the morning of and it's aboard before you are: ice in the cooler, drinks cold, groceries stowed, fresh water topped off, cabin aired and wiped down.",
-        "cta_label": "Book Ready & Go"
+        "service": "Concierge",
+        "eyebrow": "Crew concierge",
+        "title": "The errands ashore, so the crew stays aboard.",
+        "tooltip": "Laundry out, a refund chased, a package collected. Nothing to leave the boat for.",
+        "body": "Returns and refunds, laundry, pickups, the small jobs ashore that would otherwise take a crew member off the boat for an afternoon. Text it, we do it, you get a note when it’s done.",
+        "cta_label": "Request an errand"
       },
       {
         "zone": "engine",
         "label": "Engine room",
         "service": "Repairs & Maintenance",
         "eyebrow": "Repairs & Maintenance",
-        "title": "We look first. We fix if asked.",
-        "tooltip": "Oil's a shade dark. Noted. Say the word and we'll see to it.",
-        "body": "During Ready & Go we check oil level and color, battery reading and bilge. If anything looks off we tell you at once and stop there. Repairs happen only when you ask: our own repair team, or a trusted local marine mechanic we know.",
-        "cta_label": "Ask about repairs"
+        "title": "We flag it. We don’t fix it.",
+        "tooltip": "Oil’s a shade dark. Noted, and the mechanic’s number is ready.",
+        "body": "Anything we notice that looks off, you hear at once, and we stop there. If you want it fixed, we line up a trusted local marine mechanic and coordinate the visit.",
+        "cta_label": "Ask about maintenance"
       }
     ]
   },
   "how": {
-    "eyebrow": "How Ready & Go works",
+    "eyebrow": "How it works",
     "headline": "Three steps. One text starts it.",
-    "intro": "Built for the morning-of decision: the fog forecast looks kind, you have the afternoon, and you'd rather not spend an hour prepping. Decide late, still go.",
+    "intro": "Built for the specific ask: fuel and ice by 1pm, a diver next week, a part picked up before the weekend. Text it and we take it from there.",
     "steps": [
       {
-        "title": "Text us the morning of",
-        "body": "Boat name, marina, slip, when you'd like to be off the dock, anything you want aboard. A text is fastest; the short form below works too."
+        "title": "Text us what you need",
+        "body": "Boat name, marina, slip, what needs doing and by when. A text is fastest; the short form below reaches the same people."
       },
       {
-        "title": "We confirm a ready-by time",
-        "body": "One reply, with the time your boat will be ready. Then we go to work, and you go back to yours."
+        "title": "We confirm what we can do, and when",
+        "body": "One reply: what we’ll handle, a ready-by time, and the fee. If it’s outside what we do, we say so and point you to someone who does it well."
       },
       {
-        "title": "Show up and go",
-        "body": "Your conditions brief lands before you do. Fuel and water topped, ice in, engine checked, fenders set. Lines are ready to slip. Step aboard."
+        "title": "It’s handled",
+        "body": "You get a text when it’s done, with a note of what was done and who came aboard, if anyone did."
       }
     ]
   },
   "included": {
-    "eyebrow": "What's included",
-    "headline": "The hour at the dock, itemized.",
-    "intro": "Every Ready & Go covers the same six jobs, in the same order, logged the same way. One flat fee, no menu to build.",
+    "eyebrow": "What we handle",
+    "headline": "The land-side list, handled.",
+    "intro": "The requests we’re built around. Ask for any of it, and it’s done the same way every time and logged the same way.",
     "items": [
       {
-        "title": "Systems check",
-        "line": "Oil level and color, battery reading, bilge. Noted, not guessed."
-      },
-      {
-        "title": "Fuel & water",
-        "line": "Fuel topped off, fresh water filled. Tanks full when you step aboard."
-      },
-      {
         "title": "Provisioning",
-        "line": "Ice, drinks and whatever groceries you texted, loaded and stowed."
+        "line": "Ice, drinks and groceries bought and brought to the dock at the time you said."
       },
       {
-        "title": "Propane & safety",
-        "line": "Propane level, life jackets, flares, extinguisher: checked, expiry dates read."
+        "title": "Parts & pickups",
+        "line": "Chandlery runs, parts collected, packages received and met at the gate."
       },
       {
-        "title": "Deck prep",
-        "line": "Fenders and lines set for your slip, quick wipe-down, trash off."
+        "title": "Returns & refunds",
+        "line": "Wrong part, wrong size, changed plans: we take it back and chase the refund."
+      },
+      {
+        "title": "Fuel, water & propane",
+        "line": "Jerry cans filled and returned, fresh water topped off, propane exchanged."
+      },
+      {
+        "title": "Errands ashore",
+        "line": "Trash off, laundry out and back, the small jobs that would take a crew member off the boat."
       },
       {
         "title": "Conditions brief",
-        "line": "Wind, tide and weather for your route, texted before you arrive."
+        "line": "Wind, tide and weather for your route, texted before you leave."
       }
     ],
-    "footnote": "During Ready & Go we check and alert; we don't repair. If a fluid looks off or a flare's expired, you hear first, then choose: a trusted local mechanic or our repair team.",
+    "footnote": "Anything we notice aboard, we flag to the captain. We don’t repair. If you want it fixed, we line up a trusted local marine mechanic and coordinate the visit.",
     "brief_sample": {
       "sender": "aBeam",
-      "message": "For your 1pm: fog lifting off Alcatraz, sun by noon. Westerly 12 kts now, 20+ in the Slot by 3. Max ebb 2:40 at the Gate, so expect chop past Crissy. Halcyon ready by 12:30.",
-      "caption": "The brief that lands before you've left the office."
+      "message": "For your 1pm: fog lifting off Alcatraz, sun by noon. Westerly 12 kts now, 20+ in the Slot by 3. Max ebb 2:40 at the Gate, so expect chop past Crissy. Provisions at the dock by 12:30.",
+      "caption": "The brief that lands before you’ve left for the dock."
     }
   },
   "services": {
-    "eyebrow": "Beyond prep",
-    "headline": "When the boat needs more than prep.",
-    "intro": "Ready & Go is the front door. Behind it is the same small team for the jobs that don't fit into a morning.",
+    "eyebrow": "Services",
+    "headline": "Ask for what the boat needs.",
+    "intro": "Three ways we work. All of them start with a text, and most of them are handled from the dock.",
     "cards": [
       {
-        "title": "Detailing",
-        "body": "Exterior wash and wax, brightwork, interior detailing down to the lockers. Salt, sun and pelicans are hard on a boat. We undo it, on a schedule or on request.",
-        "link_label": "Ask about detailing"
+        "title": "Concierge",
+        "body": "Provisions, parts, returns and refunds, pickups, deliveries, errands. The land-side list, handled so the crew stays with the boat.",
+        "link_label": "Send a request"
+      },
+      {
+        "title": "Trip management",
+        "body": "Berths at the next stop, fuel and pump-out timing, provisioning by the day, vendors booked before you leave and chased while you’re away. One point of contact, every request logged.",
+        "link_label": "Ask about trip management"
       },
       {
         "title": "Repairs & Maintenance",
-        "body": "Oil changes, impellers, batteries, winch service, the leak you keep meaning to chase. Our own repair team handles it, or we connect you with a trusted local marine mechanic.",
-        "link_label": "Ask about repairs"
-      },
-      {
-        "title": "Full Management",
-        "body": "Upkeep, scheduling, storage and vendor coordination for owners who'd rather read one update than field a dozen calls. One point of contact, every visit logged.",
-        "link_label": "Ask about management"
+        "body": "We flag, we don’t fix. Anything that looks off goes to the captain at once, and if you want it handled we line up a trusted local marine mechanic, rigger or canvas shop and see the job through.",
+        "link_label": "Ask about maintenance"
       }
     ],
-    "more": "A diver booked, a part collected, a surveyor met. Text us and ask. If it's not something we do, we'll tell you who does."
+    "more": "A diver arranged, a part collected, a refund chased, a surveyor met. Text us and ask. If it’s not something we do, we’ll tell you who does."
   },
   "marinas": {
     "eyebrow": "Where we work",
     "headline": "Built for boats at three city marinas.",
-    "intro": "South Beach Harbor beside the ballpark, Pier 39 in the thick of the Wharf, and the San Francisco Marina off Marina Green, nearest the Gate. Tap a pin for status and berths.",
+    "intro": "South Beach Harbor beside Oracle Park, Pier 39 at Fisherman’s Wharf, and the San Francisco Marina at Marina Green. Tap a pin for status and berths.",
     "legend_serving": "Currently serving",
     "legend_soon": "Coming soon",
-    "popup_cta_soon": "Get on the list",
-    "popup_cta_serving": "Book Ready & Go",
-    "footnote": "A marina shows as serving only once we've confirmed dock access there. Not listed, or still coming soon? Text us and we'll tell you where things stand.",
+    "popup_cta_soon": "Ask about timing",
+    "popup_cta_serving": "Send a request",
+    "footnote": "A marina shows as serving only once we’ve confirmed dock access there. Not listed, or still coming soon? Text us and we’ll tell you where things stand.",
     "other_option_label": "Other / not sure yet"
   },
   "trust": {
     "eyebrow": "Trust & safety",
     "headline": "Who was aboard, and what was done.",
-    "intro": "Handing over the companionway key to someone you haven't met takes trust. We've arranged things so you never have to take our word for it.",
+    "intro": "Handing your keys to someone you haven’t met takes trust. Here is what we can show for it.",
     "points": [
       {
         "title": "Fully insured for boat access",
-        "body": "We're fully insured for boat access. Marinas require it, and so should you. Ask us for the insurance certificate any time. We work within your marina's vendor rules, not around them."
+        "body": "Marinas require it; ask us for the certificate any time. We work within your marina’s vendor rules, not around them."
       },
       {
-        "title": "Every visit logged",
-        "body": "Who was aboard, when, and what was done, written down every time. A fluid looked off, a flare expired, a fender moved: it's in the record and in your text."
+        "title": "Every request logged",
+        "body": "What was asked, what was done, when, and who came aboard if anyone did. Written down every time, and in your text."
       },
       {
         "title": "Small, local, vetted team",
-        "body": "Not a franchise, not a rotating roster of contractors. A few people we've vetted ourselves, who know these docks and know each other. You'll know their names."
+        "body": "Not a franchise, not a rotating roster of contractors. A few people we’ve vetted ourselves, who know these docks and know each other. You’ll know their names."
       },
       {
-        "title": "We check. We don't tinker.",
-        "body": "During Ready & Go we look and report; we never start a repair you haven't asked for. If something's off, you choose: our repair team, or a trusted local marine mechanic we'll introduce."
+        "title": "We flag. We don’t fix.",
+        "body": "Anything we notice aboard goes to the captain at once, and we stop there. If you want it handled, we line up a trusted local marine mechanic and coordinate the visit."
       }
     ]
   },
   "pricing": {
     "eyebrow": "Pricing",
-    "headline": "One fee per outing, agreed up front.",
+    "headline": "Quoted per request, agreed up front.",
     "price_prefix": "Starting at",
-    "price_suffix": "per outing",
-    "price_note": "A flat fee per Ready & Go, set by your boat's length, typically $75–150. Fuel, ice and provisions are added at cost. No hourly clock.",
-    "includes_line": "Every outing includes all six Ready & Go items, the conditions brief and a logged record of the visit.",
+    "price_suffix": "per request",
+    "price_note": "Every request is quoted before we start, typically $75–150 depending on scope. Purchases, fuel and provisions are added at cost, receipts included. No hourly clock.",
+    "includes_line": "Quote by text before we start. Receipts with the note when it’s done.",
     "membership_title": "Membership, coming soon",
-    "membership_body": "For owners who go out often. We're working out the terms now. Leave your number and you'll hear when it's ready, and not before.",
+    "membership_body": "For boats that need us often. We’re working out the terms now. Leave your number and you’ll hear when it’s ready, and not before.",
     "membership_cta": "Join the waitlist"
   },
   "book": {
-    "eyebrow": "Book an outing",
-    "headline": "Tell us when you want to go.",
-    "intro": "Texting is fastest. If you'd rather use the form, it reaches the same people. Either way, you get a ready-by time back.",
+    "eyebrow": "Send a request",
+    "headline": "Tell us what the boat needs.",
+    "intro": "Texting is fastest. If you’d rather use the form, it reaches the same people. Either way, you get a reply with what we can do and when.",
     "labels": {
       "name": "Your name",
       "phone": "Mobile number",
       "marina": "Marina",
       "boat": "Boat name & slip",
-      "datetime": "Off the dock at",
-      "notes": "Provisions, route, anything else"
+      "datetime": "Needed by",
+      "notes": "What does the boat need?"
     },
     "placeholders": {
       "name": "First and last name",
-      "phone": "Best number for the ready-by text",
+      "phone": "Best number to text back",
       "boat": "Halcyon · slip C-14",
-      "notes": "Ice, sparkling water, sandwiches for four. Thinking Angel Island and back."
+      "notes": "Ice and groceries to the dock by 1pm Saturday. Return the wrong impeller to the chandlery and chase the refund."
     },
     "marina_other": "Other / not sure yet",
-    "submit": "Request a ready-by time",
+    "submit": "Send request",
     "alt_line": "Or skip the form and just text us.",
-    "success": "Got it. We'll text you back with a ready-by time. If anything needs a decision, we'll ask before we act. Finish your coffee. The dock is handled.",
+    "success": "Got it. We’ll text you back with what we can do, by when, and the fee. If anything needs a decision, we’ll ask before we act.",
     "composing": "Opening your messages with the details filled in. Just hit send.",
-    "error_required": "We'll need this to get started.",
-    "privacy": "Your details go to us and no one else. We text about your booking, not marketing."
+    "error_required": "We’ll need this to get started.",
+    "privacy": "Your details go to us and no one else. We text about your request, not marketing."
   },
   "footer": {
-    "blurb": "aBeam is a small San Francisco team working alongside owners at the city marinas: your boat ready before you reach the dock, and looked after between outings.",
+    "blurb": "aBeam is a small San Francisco team working alongside captains, crews and owners at the city marinas: the land-side list handled, one text at a time, so the crew can stay with the boat.",
     "area_label": "Service area",
     "area": "South Beach Harbor · Pier 39 Marina · San Francisco Marina (Marina Green)",
     "contact_label": "Text or call",
@@ -258,51 +258,51 @@
   },
   "sticky_cta": {
     "label": "Text us",
-    "sublabel": "Same-morning prep · flat fee"
+    "sublabel": "Same-day requests · quoted up front"
   },
-  "sms_prefill": "Hi aBeam, it's [name]. Ready & Go for [boat name] at [marina], slip [slip]. Off the dock at [date/time]. Please load: [ice, drinks, groceries].",
+  "sms_prefill": "Hi aBeam, it's [name]. [Boat name] at [marina], slip [slip]. We need: [what the boat needs]. By [date/time].",
   "extras": {
     "alt_headlines": [
-      "Text us. Your boat is ready when you arrive.",
-      "The hour at the dock, returned to you.",
-      "Show up. Step aboard. Cast off."
+      "The land-side list, handled one text at a time.",
+      "Text us the errand. The crew stays aboard.",
+      "What the boat needs ashore, quoted up front and done."
     ],
-    "elevator_pitch": "aBeam is an on-demand boat concierge for San Francisco's city marinas. Text us the morning you want to go out; by the time you reach your slip, the boat is fueled, iced, checked and set up, with a conditions brief on your phone. One flat fee per outing, set by boat length. Detailing, repairs and management when you want more.",
-    "one_liner": "Text aBeam the morning you want to go out. Your boat is fueled, provisioned and checked when you arrive.",
-    "google_business_description": "aBeam is an on-demand boat and yacht concierge for owners at San Francisco's city marinas: South Beach Harbor, Pier 39 Marina and the San Francisco Marina at Marina Green. Ready & Go, our flagship, is same-morning pre-departure prep for a flat fee per outing: fuel and water topped off, ice and provisions loaded, engine oil, battery, bilge, propane and safety gear checked, fenders and lines set, and a conditions brief texted before you arrive. We check and alert; we don't repair during prep unless you ask. Fully insured for boat access, with a logged record of every visit. Small, local, vetted team. Detailing, repairs and full boat management for owners who want more handled.",
-    "instagram_bio": "SF boat concierge. Text us the morning you want to go out; your boat is fueled, checked and ready at the slip. Ready & Go · Detailing · Repairs",
+    "elevator_pitch": "aBeam is a shore-side concierge for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs: provisions to the dock, a part collected, a return chased, jerry cans filled, laundry out and back, a berth at the next stop. We reply with what we can do, by when, and the fee, then do it on land so the crew can stay with the boat. Each request is quoted on its own; no packages, no hourly clock. Anything we notice aboard, we flag to the captain and stop there. If it’s outside what we do, we say so and point you to someone who does it well.",
+    "one_liner": "Text aBeam what the boat needs ashore. You get a reply with what we can do, by when, and the fee.",
+    "google_business_description": "aBeam is a shore-side concierge for captains, crews and owners at San Francisco’s city marinas: South Beach Harbor, Pier 39 Marina and the San Francisco Marina at Marina Green. Text us what the boat needs and we reply with what we can do, by when, and the fee. No packages, no hourly clock. Provisions to the dock, parts and packages collected, returns and refunds chased, jerry cans filled, propane exchanged, laundry and errands ashore, a conditions brief before you leave. For boats on the move, berths at the next stop and vendors booked and chased. We flag, we don’t fix; if you want it handled, we line up a trusted local marine mechanic. Fully insured for boat access, every request logged. Small, local, vetted team.",
+    "instagram_bio": "SF shore-side boat concierge. Captains, crews and owners text us what the boat needs; we do it ashore. Provisions · Parts · Returns · Errands",
     "marina_flyer": {
-      "headline": "Your boat, ready before you reach the dock.",
-      "body": "aBeam is a small San Francisco team that preps your boat the morning you want to go out: fuel and water topped, ice and provisions aboard, engine oil, battery and bilge checked, propane and safety gear checked, fenders and lines set, and a conditions brief texted ahead. One flat fee per outing, set by boat length. Fully insured for boat access, every visit logged. Detailing, repairs and full management too.",
-      "cta": "Text aBeam the morning you want to go out."
+      "headline": "The land-side list, handled.",
+      "body": "aBeam is a small San Francisco team for captains, crews and owners at the city marinas. Text us what the boat needs and we reply with what we can do, by when, and the fee. Provisions to the dock, parts and packages collected, returns and refunds chased, jerry cans filled, propane exchanged, laundry and errands ashore, a conditions brief before you leave. Berths at the next stop and vendors coordinated for boats on the move. We flag, we don’t fix. Each request quoted on its own; no packages, no hourly clock. Fully insured for boat access, every request logged.",
+      "cta": "Text aBeam what the boat needs."
     },
     "sms_templates": {
-      "auto_reply": "aBeam here. Thanks, we have your message and will text back with a ready-by time. If you haven't yet, send your boat name, marina, slip and when you'd like to leave.",
-      "confirm_ready_by": "aBeam here. [Boat name] at [marina], slip [slip], will be ready by [time]. Fuel, water, ice and [provisions] are on the list. Your conditions brief follows before you head down. Anything to add, just reply.",
-      "ready": "[Boat name] is ready at [slip]. Fuel and water full, ice in, lines and fenders set, systems checked and logged. Your brief is above. Step aboard whenever you like.",
-      "flag_issue": "aBeam here. Checking [boat name], we found [issue]. Noted in your log, not touched; we don't repair during Ready & Go. [Everything else is ready.] Two options: a trusted local marine mechanic we can connect you with, or our own repair team. Just reply.",
-      "conditions_brief": "Brief for your [time]: [fog/sun] now, [clearing by noon]. Westerly [xx] kts, building to [xx] in the Slot by [time]. [Ebb/flood] at the Gate, max [time], so expect [chop/smooth water] off [Crissy/Alcatraz]. [Out on the ebb, home on the flood.] [Boat name] ready by [time]."
+      "auto_reply": "aBeam here. Thanks, we have your message and will text back with what we can do, by when, and the fee. If you haven’t yet, send the boat name, marina, slip, what you need and by when.",
+      "confirm_ready_by": "aBeam here. [Boat name] at [marina], slip [slip]. We can handle [what we’ll do], at the dock by [time] on [date]. Fee: $[amount], plus [purchases and provisions] with receipts. Reply yes to confirm. Anything to add, send it now.",
+      "ready": "aBeam here. [Boat name], slip [slip]: done. [What was done]. [Handed aboard at [time] / Left with [name] at the gate / No one came aboard.] Receipts and the note are in your log. Anything else, just text.",
+      "flag_issue": "aBeam here. While aboard [boat name] we noticed [issue]. Flagged to you, not touched; we don’t fix. If you want it handled, we can line up a trusted local marine mechanic and coordinate the visit. Just reply.",
+      "conditions_brief": "Brief for your [time]: [fog/sun] now, [clearing by noon]. Westerly [xx] kts, building to [xx] in the Slot by [time]. [Ebb/flood] at the Gate, max [time], so expect [chop/smooth water] off [Crissy/Alcatraz]. [Provisions at the dock by [time].]"
     },
     "email_confirmation": {
-      "subject": "Ready & Go confirmed: [boat name], [date], ready by [time]",
-      "body": "Hi [name],\n\nYour Ready & Go is booked.\n\nBoat: [boat name], slip [slip], [marina]\nReady by: [time] on [date]\nProvisions: [list]\n\nBefore you arrive we'll text a conditions brief with wind, tide and weather for your route. During the visit we check and alert; if anything looks off, you'll hear from us before anything is done about it. We don't repair during prep unless you ask.\n\nFlat fee: $[amount], with fuel, ice and provisions added at cost. A record of who was aboard and what was done follows the visit.\n\nChange of plans? Reply here or text us.\n\naBeam"
+      "subject": "aBeam: [request] for [boat name], by [time] on [date]",
+      "body": "Hi [name],\n\nConfirming your request.\n\nBoat: [boat name], slip [slip], [marina]\nRequest: [what we’ll handle]\nBy: [time] on [date]\nFee: $[amount], quoted for this request. [Purchases, fuel and provisions are itemized on top, receipts included.]\n\nIf we come aboard and notice anything that looks off, you’ll hear from us at once; we flag, we don’t fix. If you want it handled, we line up a trusted local marine mechanic and coordinate the visit.\n\nWhen it’s done you’ll get a text with a note of what was done and who came aboard, if anyone did.\n\nChange of plans? Reply here or text us.\n\naBeam"
     },
     "faq": [
       {
-        "q": "How far ahead do I need to text?",
-        "a": "The morning you want to go out is fine; that's what Ready & Go is built for. Earlier is welcome, especially for a busy Saturday or a long provisions list, and we'll confirm a ready-by time either way."
+        "q": "What can I ask for?",
+        "a": "The land-side list: provisions bought and brought to the dock, parts and packages collected, returns and refunds chased, jerry cans filled and propane exchanged, laundry and errands ashore, a conditions brief before you leave. For boats on the move, berths at the next stop and vendors booked and chased. Same-day requests are welcome. If it’s outside what we do, we say so and point you to someone who does it well."
       },
       {
         "q": "What does it cost?",
-        "a": "A flat fee per outing, set by your boat's length, typically $75–150. Fuel, ice and provisions are added at cost, and that's the whole bill. You'll know the fee before we step aboard. Membership pricing is coming; join the waitlist to hear first."
+        "a": "Each request is quoted before we start; no hourly clock. Typically $75–150 depending on scope, with purchases, fuel and provisions itemized on top, receipts included. You’ll know the fee before we do anything. Membership for boats that need us often is coming; join the waitlist to hear first."
       },
       {
-        "q": "What if you find something wrong?",
-        "a": "We tell you straight away and stop there. During Ready & Go we check and alert; we don't repair. From there it's your choice: we can connect you with a trusted local marine mechanic, or our own repair team can handle it."
+        "q": "Do you do repairs?",
+        "a": "No. We flag, we don’t fix. Anything we notice aboard goes to the captain at once, and we stop there. If you want it handled, we line up a trusted local marine mechanic, rigger or canvas shop and see the job through."
       },
       {
         "q": "Do you have access to my marina yet?",
-        "a": "We're launching at South Beach Harbor, Pier 39 Marina and the San Francisco Marina at Marina Green. A marina shows as serving on our chart only once dock access there is confirmed, never before. Text us your marina and slip and we'll tell you where things stand."
+        "a": "We’re launching at South Beach Harbor, Pier 39 Marina and the San Francisco Marina at Marina Green. A marina shows as serving on our chart only once dock access there is confirmed, never before. Text us the marina and slip and we’ll tell you where things stand."
       }
     ]
   }
