@@ -165,11 +165,11 @@ export const STATUS_LABELS = { serving:'Currently serving', soon:'Coming soon' }
   (`.panel-eyebrow`, `.panel-title`, `.panel-body`, `.panel-cta` text+href) from `hotspots`, sets the pressed chip, and flies the camera to frame that zone (~700ms, eased).
 - Markers: one `CSS2DObject` per hotspot zone except 'whole' → `<button class="hotspot" data-zone aria-label="…"><span class="hotspot-dot"></span><span class="hotspot-tip" role="tooltip">…tooltip…</span></button>`.
   Tooltip shows on hover AND :focus-visible (butler voice, from `hotspots[].tooltip`). Markers behind the hull (raycast-occluded) get `.is-behind` (opacity .35).
-- Procedural boat (no model files, no fetches): ~34 ft sloop. Lofted hull from cross-section stations (BufferGeometry), white/off-white topsides,
+- Procedural boat (no model files, no fetches): ~24 m flybridge luxury motor yacht (replaced the 34 ft sloop on 2026-09-22). Lofted hull from cross-section stations (BufferGeometry), white/off-white topsides,
   navy boot stripe at waterline, teak toe-rail + rubrail + cockpit sole + hatch trim, white trunk cabin with dark port lights, mast + boom with a NAVY sail cover (sails furled — she's docked),
-  stanchions/lifelines (thin cylinders), a stern rail, a cockpit with wheel. Below-waterline hull hidden under an opaque water plane. Total ≤ 40k triangles.
+  stanchions/lifelines (thin cylinders), a stern rail, a cockpit with wheel. Below-waterline hull hidden under an opaque water plane. Total ≤ 150k triangles (currently ~33.5k, 44 draw calls after material batching).
 - Water: large disc, --navy-800-ish MeshStandardMaterial, radial alpha fade to the stage background at the edges (canvas alphaMap), FogExp2 matching the stage bg.
-  Baked contact shadow (radial-gradient canvas texture on a plane just above the water) — NO shadow maps. Gentle bob/heel animation (disabled under reducedMotion).
+  Baked contact shadow (radial-gradient canvas texture on a plane just above the water) PLUS one PCFSoft shadow map from the key light (2048 desktop / 1024 under 768px) — updated 2026-09-22 for the luxury-yacht upgrade. Gentle bob/heel animation (disabled under reducedMotion).
 - Lighting: HemisphereLight (sky #CFE3F5, ground #0B1F3A), key DirectionalLight warm (#FFF1DC) from upper front-left, cool fill from the right. ACESFilmic tone mapping, exposure ≈1.05.
 - Renderer: antialias:true, alpha:false, clearColor = stage bg (#0B1F3A), powerPreference:'high-performance', pixelRatio = min(devicePixelRatio, width<768 ? 1.5 : 2). Resize via ResizeObserver.
 - Render loop ONLY while stageEl is intersecting the viewport AND document.visibilityState==='visible'. Slow auto-orbit when idle; pauses for ~6s after user interaction. Occlusion raycast every 3rd frame.

@@ -33,21 +33,21 @@
   transition: opacity var(--dur) var(--ease);
 }
 .hotspot-dot {
-  width: 14px; height: 14px; border-radius: 50%; background: #fff;
-  box-shadow: 0 0 0 3px rgba(196,136,79,.95), 0 0 0 9px rgba(196,136,79,.22), 0 2px 8px rgba(0,0,0,.35);
+  width: 9px; height: 9px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 1.5px var(--teak), 0 0 0 6px rgba(196,136,79,.16), 0 1px 5px rgba(0,0,0,.45);
   transition: transform var(--dur) var(--ease), background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .hotspot:hover .hotspot-dot, .hotspot:focus-visible .hotspot-dot, .hotspot.is-focused .hotspot-dot, .hotspot.is-selected .hotspot-dot {
-  background: var(--teak); transform: scale(1.18);
-  box-shadow: 0 0 0 3px #fff, 0 0 0 9px rgba(255,255,255,.18), 0 2px 8px rgba(0,0,0,.35);
+  background: var(--teak); transform: scale(1.15);
+  box-shadow: 0 0 0 1.5px #fff, 0 0 0 6px rgba(255,255,255,.16), 0 1px 5px rgba(0,0,0,.45);
 }
 .hotspot:focus-visible { outline: none; }
-.hotspot.is-behind { opacity: .32; }
+.hotspot.is-behind { opacity: .3; }
 
 .hotspot-tip {
   position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translate(-50%, 4px);
-  width: max-content; max-width: 230px; padding: 9px 13px; border-radius: 10px;
-  background: rgba(7,20,39,.94); color: var(--stage-fg); border: 1px solid var(--stage-line); box-shadow: var(--shadow-2);
+  width: max-content; max-width: 230px; padding: 8px 12px; border-radius: 9px;
+  background: rgba(7,20,39,.95); color: var(--stage-fg); border: 1px solid var(--stage-line); box-shadow: var(--shadow-2);
   font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: .84rem; line-height: 1.4; text-align: left; letter-spacing: 0;
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease), visibility 0s linear var(--dur);
