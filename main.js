@@ -2,6 +2,7 @@
 // Page wiring. Reads content.js and hands the 3D boat and the chart to their modules.
 import { CONFIG, MARINAS, HOTSPOTS, STATUS_LABELS, COPY_UI } from './content.js';
 import { initMap } from './map.js';
+import { initChapters, prepareStill } from './chapters.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -10,6 +11,14 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matc
 function smsHref(body) {
   return `sms:${CONFIG.phoneE164}?&body=${encodeURIComponent(body || CONFIG.smsBody)}`;
 }
+
+/* ---------- ?p= still: into the DOM before the first paint ---------- */
+prepareStill({
+  voyageEl: $('#hero'),
+  panelEl: $('#boat-panel'),
+  chipsEl: $('#boat-chips'),
+  hotspots: HOTSPOTS,
+});
 
 /* ---------- Contact links, price, year ---------- */
 $$('a.sms').forEach((a) => { a.href = smsHref(); });
@@ -49,15 +58,43 @@ window.addEventListener('scroll', onScroll, { passive: true });
 onScroll();
 
 const sticky = $('#sticky-cta');
-const heroCta = $('#hero-cta-primary');
-if (sticky && heroCta && 'IntersectionObserver' in window) {
+// The hero CTA lives on a sticky stage that stays on screen for the whole voyage, so the
+// sticky bar is driven by a sentinel one viewport down instead (same rule as before:
+// show it once that point has scrolled off the top).
+const stickyAnchor = $('#cta-sentinel') || $('#hero-cta-primary');
+if (sticky && stickyAnchor && 'IntersectionObserver' in window) {
   const io = new IntersectionObserver((entries) => {
     const e = entries[0];
     const show = !e.isIntersecting && e.boundingClientRect.top < 0;
     sticky.hidden = !show;
     document.body.classList.toggle('has-sticky', show);
   }, { threshold: 0 });
-  io.observe(heroCta);
+  io.observe(stickyAnchor);
+}
+
+/* ---------- Section heads: visible by default, revealed on scroll when JS can ---------- */
+if (!reducedMotion && 'IntersectionObserver' in window) {
+  const heads = $$('.section .section-head');
+  if (heads.length) {
+    document.documentElement.classList.add('js-reveal');
+    const revealIo = new IntersectionObserver((entries, obs) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        e.target.classList.add('is-in');
+        obs.unobserve(e.target);
+      });
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.01 });
+    heads.forEach((h) => revealIo.observe(h));
+    // belt and braces: copy must never be left hidden, so the first scroll also reveals
+    // anything already on screen, and after 8s everything shows regardless
+    const sweep = () => heads.forEach((h) => {
+      if (h.classList.contains('is-in')) return;
+      const r = h.getBoundingClientRect();
+      if (r.top < window.innerHeight * 0.92 && r.bottom > 0) h.classList.add('is-in');
+    });
+    window.addEventListener('scroll', () => requestAnimationFrame(sweep), { passive: true, once: true });
+    window.setTimeout(() => heads.forEach((h) => h.classList.add('is-in')), 8000);
+  }
 }
 
 /* ---------- Booking form ---------- */
@@ -208,13 +245,16 @@ try {
   console.error('[aBeam] marina chart failed to initialise', err);
 }
 
-/* ---------- 3D boat ---------- */
+/* ---------- 3D boat + the chapter sequence ---------- */
 const stageEl = $('#boat-stage');
 const panelEl = $('#boat-panel');
 const chipsEl = $('#boat-chips');
+const voyageEl = $('#hero');
 
 function boatFallback() {
   if (stageEl) stageEl.classList.add('boat-stage--fallback');
+  // no WebGL: the voyage unstacks into ordinary cards over the CSS stage
+  initChapters({ voyageEl, api: null, reducedMotion });
   // keep the chips + panel working without WebGL
   if (chipsEl && panelEl) {
     chipsEl.addEventListener('click', (ev) => {
@@ -237,7 +277,8 @@ if (stageEl && panelEl && chipsEl) {
   import('./boat.js')
     .then(({ initBoat }) => {
       const api = initBoat({ stageEl, panelEl, chipsEl, hotspots: HOTSPOTS, reducedMotion, ui: COPY_UI });
-      if (!api) boatFallback();
+      if (!api) { boatFallback(); return; }
+      initChapters({ voyageEl, api, reducedMotion });
     })
     .catch((err) => {
       console.error('[aBeam] 3D boat failed to load', err);

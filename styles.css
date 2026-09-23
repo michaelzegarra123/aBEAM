@@ -69,7 +69,10 @@ body {
   line-height: 1.6;
   font-variation-settings: "wdth" 100;
   -webkit-font-smoothing: antialiased;
+  /* clip, not hidden: `hidden` would make <body> a scroll container and break the
+     sticky voyage stage */
   overflow-x: hidden;
+  overflow-x: clip;
 }
 [hidden] { display: none !important; }
 img, svg { max-width: 100%; }
@@ -139,61 +142,225 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 @media (max-width: 960px) { .site-nav { display: none; } #header-cta { margin-left: auto; } }
 @media (max-width: 600px) { .header-note { display: none; } }
 
-/* ---------- 4. Stage (hero + showcase share one navy band) ---------- */
+/* ---------- 4. The voyage: one sticky stage, seven composed shots ----------
+   .voyage is a tall track. .voyage-stage sticks for the whole of it and holds the
+   canvas plus every overlay; .voyage-bands supplies the scroll distance — one band
+   per chapter. chapters.js writes data-chapter on .voyage, which is what fades the
+   hero, the title card and the zone card in and out. */
 .stage {
   background: var(--stage-bg); color: var(--stage-fg);
   background-image: radial-gradient(1100px 520px at 12% -10%, rgba(31,78,133,.38), transparent 60%);
 }
-.hero { padding-block: clamp(40px, 7vh, 88px) clamp(20px, 3vh, 36px); }
-.hero-inner { display: grid; gap: 20px; max-width: 800px; }
-.hero .tagline { margin-bottom: -6px; }
-.hero-sub { font-size: clamp(1.1rem, 1.6vw, 1.3rem); line-height: 1.5; color: #C9D6E5; max-width: 58ch; text-wrap: pretty; }
-.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
-.hero-micro { font-size: .9rem; color: var(--stage-muted); }
-@media (max-width: 600px) {
-  .hero { padding-top: 28px; }
-  .hero-inner { gap: 16px; }
-  .hero-actions { flex-direction: column; }
-  .hero-actions .btn { width: 100%; }
-  #hero-cta-primary { min-height: 60px; font-size: 1.125rem; }
+.voyage {
+  position: relative;
+  margin-top: calc(-1 * var(--header-h));   /* the film runs under the glass header */
+  background-image: none;
+  --band-h: 80svh;
+  --card-w: min(352px, 31vw);
+  --index-w: 116px;
+  --shot-dur: .62s;
+}
+.voyage-stage { position: sticky; top: 0; height: 100svh; overflow: hidden; }
+.voyage .boat-stage {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border-radius: 0; box-shadow: none; background: var(--stage-bg-deep); overflow: hidden;
+}
+.voyage-bands { position: relative; }
+.band { height: var(--band-h); }
+.cta-sentinel { position: absolute; top: 100svh; left: 0; width: 1px; height: 1px; }
+
+/* overlay frame: page grid on top of the film */
+.shot-frame { position: absolute; inset: 0; z-index: 1; display: flex; justify-content: center; pointer-events: none; }
+.shot-frame::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(to top, rgba(5,14,28,.82) 0%, rgba(5,14,28,.34) 26%, transparent 46%),
+    linear-gradient(96deg, rgba(5,14,28,.9) 0%, rgba(5,14,28,.6) 26%, rgba(5,14,28,.18) 46%, transparent 62%);
+  opacity: 0; transition: opacity .8s var(--ease); z-index: 0;
+}
+.voyage[data-chapter="0"] .shot-frame::before,
+.voyage[data-chapter="1"] .shot-frame::before { opacity: 1; }
+/* a quiet vignette down the right edge so the chapter ticks stay legible over a white
+   hull without putting a box around them */
+.shot-frame::after {
+  content: ""; position: absolute; inset: 0 0 0 auto; width: 280px; pointer-events: none;
+  background: linear-gradient(to right, transparent, rgba(5,14,28,.42) 52%, rgba(5,14,28,.72));
+  z-index: 0;
+}
+@media (max-width: 899px) {
+  .shot-frame::after {
+    inset: 0 0 auto 0; width: auto; height: 170px;
+    background: linear-gradient(to bottom, rgba(5,14,28,.6), rgba(5,14,28,.28) 55%, transparent);
+  }
+}
+.shot-col { position: relative; z-index: 1; width: 100%; max-width: var(--container); padding-inline: var(--gutter); }
+/* a still (a ?p= deep link, or a page that opened hidden) lands on its final styles:
+   a document that is not being rendered never advances a transition */
+.voyage[data-still] .shot,
+.voyage[data-still] .boat-panel,
+.voyage[data-still] .chapter-index,
+.voyage[data-still] .chapter-index .chip,
+.voyage[data-still] .chapter-index .chip::after,
+.voyage[data-still] .shot-frame::before { transition: none !important; }
+
+/* a shot's text block: lower-left, cross-dissolved */
+.shot {
+  position: absolute; left: var(--gutter); bottom: clamp(24px, 5.5vh, 62px);
+  width: min(600px, 54%); pointer-events: none;
+  opacity: 0; visibility: hidden; transform: translateY(12px);
+  transition: opacity var(--shot-dur) var(--ease), transform var(--shot-dur) var(--ease), visibility 0s linear var(--shot-dur);
+}
+.shot a, .shot button { pointer-events: auto; }
+.voyage[data-chapter="0"] .shot-hero,
+.voyage[data-chapter="1"] .shot-title {
+  opacity: 1; visibility: visible; transform: none; transition-delay: 0s, 0s, 0s;
+}
+.hero-inner { display: grid; gap: clamp(12px, 1.6vh, 20px); text-shadow: 0 1px 24px rgba(4,12,24,.55); }
+.shot-hero .tagline { margin-bottom: -4px; }
+.shot-hero h1 { font-size: clamp(2.2rem, 4.4vw, 3.6rem); }
+.hero-sub { font-size: clamp(1rem, 1.25vw, 1.15rem); line-height: 1.5; color: #C9D6E5; max-width: 46ch; text-wrap: pretty; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+.hero-micro { font-size: .875rem; color: var(--stage-muted); }
+
+/* scroll cue — graphic only */
+.scroll-cue { display: block; margin-top: clamp(14px, 2.4vh, 26px); }
+.scroll-cue-rail { display: block; width: 1px; height: 34px; background: linear-gradient(to bottom, rgba(255,255,255,.34), rgba(255,255,255,0)); position: relative; overflow: hidden; }
+.scroll-cue-rail::after { content: ""; position: absolute; left: -1px; top: 0; width: 3px; height: 9px; border-radius: 2px; background: var(--teak); }
+@media (prefers-reduced-motion: no-preference) {
+  .scroll-cue-rail::after { animation: cue-fall 2.4s cubic-bezier(.4,0,.5,1) infinite; }
+}
+@keyframes cue-fall {
+  0% { transform: translateY(-9px); opacity: 0; }
+  35% { opacity: 1; }
+  100% { transform: translateY(34px); opacity: 0; }
 }
 
-/* showcase */
-.showcase { padding-block: 8px clamp(48px, 8vh, 96px); background-image: none; }
-.showcase-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: clamp(24px, 4vw, 48px); align-items: start; }
-.showcase-side { display: grid; gap: 22px; }
-.showcase-head { display: grid; gap: 12px; }
-.showcase-head h2 { font-size: clamp(1.7rem, 2.6vw, 2.3rem); }
-.showcase-head .intro { font-size: 1.05rem; }
-.boat-stage { position: relative; width: 100%; height: clamp(380px, 62vh, 640px); overflow: hidden; border-radius: var(--radius-lg); background: var(--stage-bg-deep); box-shadow: inset 0 0 0 1px var(--stage-line); }
-.boat-hint { margin-top: 12px; font-size: .85rem; color: var(--stage-muted); letter-spacing: .02em; }
-.boat-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-  min-height: 40px; padding: 0 16px; border-radius: var(--radius-pill);
-  background: transparent; border: 1.5px solid var(--stage-line); color: var(--stage-fg);
-  font-weight: 500; font-size: .9375rem; cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
-}
-.chip:hover { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.06); }
-.chip[aria-pressed="true"] { background: var(--teak); border-color: var(--teak); color: #fff; }
+/* the title card (section 2's head) rides chapter 1 */
+.showcase-head { display: grid; gap: 10px; }
+.showcase-head h2 { font-size: clamp(1.6rem, 2.3vw, 2.1rem); }
+.showcase-head .intro { font-size: 1rem; max-width: 42ch; }
+.boat-hint { margin-top: 14px; font-size: .8rem; color: var(--stage-muted); letter-spacing: .06em; text-transform: uppercase; }
+
+/* the zone card */
 .boat-panel {
-  display: grid; gap: 12px; padding: 26px 28px;
-  background: rgba(255,255,255,.055); border: 1px solid var(--stage-line); border-radius: var(--radius-lg);
-  backdrop-filter: blur(6px);
+  position: absolute; top: clamp(22svh, 26svh, 30svh); width: var(--card-w);
+  display: grid; gap: 9px; padding: 20px 22px 22px;
+  background: linear-gradient(170deg, rgba(12,30,56,.74), rgba(7,20,39,.8));
+  border: 1px solid var(--stage-line); border-radius: var(--radius-lg);
+  box-shadow: 0 18px 50px rgba(4,12,24,.45);
+  backdrop-filter: blur(16px) saturate(1.12); -webkit-backdrop-filter: blur(16px) saturate(1.12);
+  opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(14px);
+  transition: opacity var(--shot-dur) var(--ease), transform var(--shot-dur) var(--ease), visibility 0s linear var(--shot-dur);
 }
-.panel-eyebrow { font-size: .75rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--teak-pale); }
-.panel-title { font-family: var(--font-display); font-size: 1.55rem; font-weight: 500; line-height: 1.15; letter-spacing: -.01em; }
-.panel-body { color: #C9D6E5; font-size: 1rem; }
-.panel-cta { justify-self: start; margin-top: 6px; }
-@media (max-width: 960px) {
-  .showcase-grid { grid-template-columns: 1fr; }
-  .showcase-side { display: contents; }
-  .showcase-head { order: -1; margin-bottom: 18px; }
-  .showcase-stagecol { order: 0; }
-  .boat-chips { order: 1; margin-top: 6px; }
-  .boat-panel { order: 2; }
-  .boat-stage { height: 420px; }
+.boat-panel[data-side="right"] { right: calc(var(--gutter) + var(--index-w)); left: auto; }
+.boat-panel[data-side="left"] { left: var(--gutter); right: auto; }
+.boat-panel.is-open { opacity: 1; visibility: visible; pointer-events: auto; transform: none; transition-delay: 0s, 0s, 0s; }
+.panel-eyebrow { font-size: .7rem; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; color: var(--teak-pale); }
+.panel-title { font-family: var(--font-display); font-size: 1.32rem; font-weight: 500; line-height: 1.16; letter-spacing: -.01em; }
+.panel-body { color: #C2D2E4; font-size: .92rem; line-height: 1.5; }
+.panel-cta { justify-self: start; margin-top: 4px; min-height: 42px; padding: 0 18px; font-size: .9rem; }
+
+/* chapter index — five ticks built from the zone chips */
+.boat-chips.chapter-index {
+  position: absolute; right: var(--gutter); top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 13px;
+  width: calc(var(--index-w) - 16px); pointer-events: auto;
+  opacity: 0; transition: opacity .6s var(--ease);
+  /* the ticks sit over whatever the shot puts behind them — usually white gelcoat */
+  text-shadow: 0 1px 2px rgba(4,12,24,.95), 0 0 12px rgba(4,12,24,.85), 0 0 26px rgba(4,12,24,.6);
 }
+.voyage:not([data-chapter="0"]) .chapter-index,
+.chapter-index:focus-within { opacity: 1; }
+.chapter-index .chip {
+  display: flex; align-items: center; justify-content: flex-end; gap: 9px;
+  width: 100%; min-height: 22px; padding: 0; background: none; border: 0; border-radius: 0;
+  color: #C8D7E8; font-family: var(--font-body); font-size: .625rem; font-weight: 600;
+  letter-spacing: .15em; line-height: 1.1; text-transform: uppercase; text-align: right; cursor: pointer;
+  transition: color var(--dur) var(--ease);
+}
+.chapter-index .chip::after {
+  content: ""; flex: 0 0 auto; width: 16px; height: 1.5px; background: currentColor; opacity: .55;
+  box-shadow: 0 0 6px rgba(4,12,24,.9);
+  transition: width var(--dur) var(--ease), opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.chapter-index .chip:hover { color: var(--stage-fg); }
+.chapter-index .chip:hover::after { opacity: .8; }
+.chapter-index .chip[aria-pressed="true"] { color: var(--teak-pale); }
+.chapter-index .chip[aria-pressed="true"]::after { width: 32px; opacity: 1; background: var(--teak); }
+/* the ticks read in chapter order, not DOM order */
+.chapter-index .chip[data-zone="whole"] { order: 1; }
+.chapter-index .chip[data-zone="deck"] { order: 2; }
+.chapter-index .chip[data-zone="cabin"] { order: 3; }
+.chapter-index .chip[data-zone="engine"] { order: 4; }
+.chapter-index .chip[data-zone="hull"] { order: 5; }
+
+@media (max-width: 1100px) {
+  .voyage { --card-w: min(330px, 38vw); }
+  .shot { width: min(560px, 60%); }
+}
+/* under 900px the card docks to the bottom and the index moves to the top */
+@media (max-width: 899px) {
+  .voyage { --band-h: 76svh; }
+  .shot { width: auto; right: var(--gutter); bottom: clamp(20px, 4.5vh, 40px); }
+  .shot-hero h1 { font-size: clamp(2rem, 8.4vw, 2.9rem); }
+  .hero-sub { font-size: 1rem; max-width: none; }
+  .showcase-head .intro { font-size: .95rem; max-width: none; }
+  .shot-title { bottom: auto; top: calc(var(--header-h) + 42px); }
+  .shot-frame::before { background: linear-gradient(to top, rgba(6,17,33,.9) 0%, rgba(6,17,33,.55) 34%, rgba(6,17,33,.1) 62%, transparent 78%); }
+  .voyage[data-chapter="1"] .shot-frame::before { background: linear-gradient(to bottom, rgba(6,17,33,.86) 0%, rgba(6,17,33,.4) 30%, transparent 54%); }
+  .boat-panel, .boat-panel[data-side="right"], .boat-panel[data-side="left"] {
+    left: var(--gutter); right: var(--gutter); width: auto; top: auto; bottom: clamp(16px, 3vh, 28px);
+  }
+  body.has-sticky .boat-panel { bottom: 104px; }
+  .boat-chips.chapter-index {
+    flex-direction: row; align-items: center; justify-content: flex-start; gap: 7px;
+    width: auto; left: var(--gutter); right: var(--gutter); top: calc(var(--header-h) + 12px); transform: none;
+  }
+  .chapter-index .chip { width: auto; min-height: 20px; gap: 0; font-size: 0; letter-spacing: 0; }
+  .chapter-index .chip::after { width: 18px; }
+  .chapter-index .chip[aria-pressed="true"] { gap: 8px; font-size: .5625rem; letter-spacing: .14em; }
+  .chapter-index .chip[aria-pressed="true"]::after { width: 22px; }
+}
+@media (max-width: 600px) {
+  .hero-actions { flex-direction: column; align-items: stretch; }
+  .hero-actions .btn { width: 100%; }
+  #hero-cta-primary { min-height: 56px; font-size: 1.0625rem; }
+  .shot-hero .hero-micro { display: none; }
+  .voyage { --shot-dur: .5s; }
+}
+
+/* no WebGL: the chapters unstack into ordinary cards over the CSS fallback stage */
+.voyage.is-fallback { margin-top: 0; }
+.voyage.is-fallback .voyage-bands, .voyage.is-fallback .cta-sentinel, .voyage.is-fallback .scroll-cue { display: none; }
+.voyage.is-fallback .voyage-stage {
+  position: static; height: auto; display: grid; gap: clamp(20px, 3vw, 28px);
+  width: 100%; max-width: var(--container); margin-inline: auto; padding: clamp(32px, 6vh, 72px) var(--gutter) clamp(44px, 8vh, 88px);
+}
+.voyage.is-fallback .shot-frame, .voyage.is-fallback .shot-col { display: contents; }
+.voyage.is-fallback .shot {
+  position: static; width: auto; max-width: 760px; opacity: 1; visibility: visible; transform: none; pointer-events: auto;
+}
+.voyage.is-fallback .shot-hero { order: 1; }
+.voyage.is-fallback .shot-title { order: 2; }
+.voyage.is-fallback .boat-stage { position: relative; order: 3; height: clamp(320px, 46vh, 460px); border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--stage-line); }
+.voyage.is-fallback .boat-chips.chapter-index {
+  position: static; order: 4; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start;
+  gap: 8px; width: auto; transform: none; opacity: 1;
+}
+.voyage.is-fallback .chapter-index .chip {
+  width: auto; min-height: 40px; padding: 0 16px; border-radius: var(--radius-pill);
+  border: 1.5px solid var(--stage-line); color: var(--stage-fg);
+  font-size: .9375rem; font-weight: 500; letter-spacing: normal; text-transform: none; text-align: center;
+}
+.voyage.is-fallback .chapter-index .chip::after { display: none; }
+.voyage.is-fallback .chapter-index .chip[aria-pressed="true"] { background: var(--teak); border-color: var(--teak); color: #fff; }
+.voyage.is-fallback .boat-panel {
+  position: static; order: 5; width: auto; max-width: 620px; padding: 24px 26px;
+  opacity: 1; visibility: visible; transform: none; pointer-events: auto;
+}
+.voyage.is-fallback .panel-title { font-size: 1.45rem; }
+.voyage.is-fallback .panel-body { font-size: .98rem; }
+
 /* CSS-only fallback when WebGL is unavailable */
 .boat-stage--fallback { background: radial-gradient(60% 40% at 50% 70%, rgba(31,78,133,.6), transparent 70%), var(--stage-bg-deep); }
 .boat-stage--fallback::before {
@@ -208,6 +375,14 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 /* ---------- 5. Sections ---------- */
 .section { padding-block: clamp(64px, 10vh, 112px); }
 .section + .section { border-top: 1px solid var(--border); }
+main > section[id], footer[id] { scroll-margin-top: calc(var(--header-h) + 8px); }
+
+/* Section heads are visible by default. Only once JS has confirmed it can observe them
+   (html.js-reveal) do they start hidden, and main.js adds .is-in as each scrolls in. */
+.js-reveal .section .section-head { will-change: opacity, transform; }
+.js-reveal .section .section-head:not(.is-in) { opacity: 0; transform: translateY(16px); }
+.js-reveal .section .section-head.is-in { opacity: 1; transform: none; }
+.js-reveal .section .section-head { transition: opacity .7s var(--ease), transform .7s var(--ease); }
 
 /* how */
 .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(24px, 4vw, 48px); counter-reset: step; }
@@ -382,5 +557,6 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 /* ---------- 8. Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  .js-reveal .section .section-head:not(.is-in) { opacity: 1; transform: none; }
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
 }

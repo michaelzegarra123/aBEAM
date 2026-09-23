@@ -3,12 +3,17 @@
 // No model files, no image files, no fetches: the hull and superstructure are lofted /
 // extruded in code, the teak and water textures are drawn on a <canvas>, and the
 // environment map is a shader sky run through PMREMGenerator.
-// Exposes: initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui }) → { selectZone, destroy } | null
+//
+// The camera is not an orbit toy: it is a rig that cuts between composed shots
+// (position AND look-at keyframed, framed by fraction of the frame so the yacht sits
+// where the layout leaves room). chapters.js drives it from the page scroll.
+// Exposes: initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui })
+//   → { selectZone, destroy, enterChapter, reframe, setNavigator, chapters, chapterOf } | null
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+import { CHAPTER_KEYS, zoneOfChapter, CARD_SIDE } from './chapters.js';
 
 const STAGE_BG = 0x0b1f3a;
 const clamp = THREE.MathUtils.clamp;
@@ -375,6 +380,27 @@ function makeWaterNormal() {
   return tex;
 }
 
+// soft concentric rings — the ripple that stands off the hull at the waterline
+function makeRippleTexture() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.58, 'rgba(255,255,255,0)');
+  g.addColorStop(0.68, 'rgba(198,224,255,.42)');
+  g.addColorStop(0.74, 'rgba(255,255,255,0)');
+  g.addColorStop(0.85, 'rgba(198,224,255,.20)');
+  g.addColorStop(0.91, 'rgba(255,255,255,0)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function canvasRadial(size, stops) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -431,11 +457,11 @@ function buildEnvironment(renderer) {
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      zenith: { value: new THREE.Color(0x2f6fb4) },
-      horizon: { value: new THREE.Color(0xf7e2c2) },
+      zenith: { value: new THREE.Color(0x2c6cb2) },
+      horizon: { value: new THREE.Color(0xfadfb4) },
       below: { value: new THREE.Color(0x091a30) },
       sunDir: { value: SUN.clone() },
-      sunColor: { value: new THREE.Color(0xfff3de) },
+      sunColor: { value: new THREE.Color(0xffeccb) },
       gain: { value: 1.5 },
     },
   });
@@ -510,8 +536,8 @@ function buildYacht(env, isSmall) {
 
   /* ---- materials ---- */
   const gelcoat = M(new THREE.MeshPhysicalMaterial({
-    color: 0xe7e3d8, roughness: 0.30, metalness: 0.0,
-    clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.05,
+    color: 0xe8e3d6, roughness: 0.31, metalness: 0.0,
+    clearcoat: 1, clearcoatRoughness: 0.075, envMapIntensity: 1.05,
   }));
   const gelcoatSoft = M(new THREE.MeshPhysicalMaterial({
     color: 0xdcd8cd, roughness: 0.52, metalness: 0.0,
@@ -545,7 +571,10 @@ function buildYacht(env, isSmall) {
   const lampR = M(new THREE.MeshStandardMaterial({ color: 0x3a0a10, emissive: 0xd8343f, emissiveIntensity: 1.1, roughness: 0.3 }));
   const lampG = M(new THREE.MeshStandardMaterial({ color: 0x062615, emissive: 0x2fc07a, emissiveIntensity: 1.1, roughness: 0.3 }));
   const lampW = M(new THREE.MeshStandardMaterial({ color: 0x2a2c2e, emissive: 0xfff2d8, emissiveIntensity: 0.9, roughness: 0.3 }));
-  for (const m of mats) m.envMap = env;
+  // env may be null on the priming frame — initBoat bakes the PMREM sky a beat later and
+  // assigns it to exactly this list (the additive zone overlays must never get one).
+  const pbrMats = mats.slice();
+  for (const m of pbrMats) m.envMap = env;
 
   const add = (geo, mat, cast = false, recv = false) => {
     const m = new THREE.Mesh(geo, mat);
@@ -1129,18 +1158,36 @@ function buildYacht(env, isSmall) {
     mats.push(mat);
   }
 
-  return { group, occluders, overlays, mats, texs };
+  return { group, occluders, overlays, mats, pbrMats, texs };
 }
 
-/* ==================================================================== 7. framing */
+/* ==================================================================== 7. the shot list
+   One entry per chapter, in scroll order. pos / target are world metres. compose is the
+   framing: [x, y] as a fraction of the half-frame that the LOOK-AT point is pushed by,
+   which slides the yacht the other way — negative x puts the yacht right of centre,
+   negative y lifts it. mfy is the vertical compose used when the card is docked at the
+   bottom of a narrow viewport. fov is the focal length of the shot. */
 
-const FRAMES = {
-  whole: { pos: [35.5, 15.0, 29.8], target: [-0.3, 3.5, 0] },
-  hull: { pos: [-2.2, 4.4, 36.0], target: [0.4, 1.9, 0] },
-  deck: { pos: [-26.5, 14.5, 17.0], target: [-8.4, 2.1, 0] },
-  cabin: { pos: [-3.2, 5.4, 19.5], target: [-1.4, 3.0, 1.9] },
-  engine: { pos: [-24.5, 4.2, 14.5], target: [-8.7, 1.3, 1.6] },
+const SHOT_DEFS = {
+  // hero — three-quarter bow from the sun side, yacht dominant, copy lower-left
+  hero: { pos: [30.7, 8.6, 23.0], target: [1.2, 2.7, 0], fov: 29, compose: [-0.19, -0.21], mfy: -0.26 },
+  // whole boat — high aft quarter, full length in frame: the establishing shot
+  whole: { pos: [-37.5, 15.5, 33.4], target: [-1.0, 3.3, 0], fov: 26, compose: [0.31, 0.03], mfy: -0.12 },
+  // deck — dock level off the stern quarter: cockpit, swim platform, the handover
+  deck: { pos: [-26.8, 3.9, 13.0], target: [-8.8, 1.9, 0.4], fov: 30, compose: [-0.24, 0.03], mfy: -0.10 },
+  // cabin — close on the deckhouse glass, just above window height
+  cabin: { pos: [7.0, 9.2, 30.5], target: [-2.2, 3.1, 0.5], fov: 27, compose: [0.30, -0.02], mfy: -0.12 },
+  // engine — low rake along the aft topsides, on the engine-room vents
+  engine: { pos: [-22.3, 2.2, 15.2], target: [-7.8, 1.8, 1.0], fov: 30, compose: [-0.24, 0.03], mfy: -0.10 },
+  // hull — from the water forward, topsides sweeping away to the bow
+  hull: { pos: [33.3, 3.5, 27.6], target: [2.0, 1.8, 0], fov: 29, compose: [0.30, -0.03], mfy: -0.12 },
+  // pull-back — the closing wide, back on the hero side
+  wide: { pos: [60.0, 17.0, 55.0], target: [-0.5, 3.0, 0], fov: 22, compose: [0.10, 0.02], mfy: -0.08 },
 };
+
+// the running order comes from chapters.js, so the film and the page agree on it
+const SHOTS = CHAPTER_KEYS.map((key) => ({ key, zone: zoneOfChapter(key), ...SHOT_DEFS[key] }));
+const SHOT_OF_ZONE = new Map(SHOTS.map((s, i) => [s.zone, i]));
 
 const MARKERS = {
   hull: sidePoint(0.552, 0.55, 1, 0.34).toArray(),
@@ -1161,19 +1208,32 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   const byZone = new Map(hotspots.map((h) => [h.zone, h]));
   let disposed = false;
 
-  // veil
+  // branded loader veil
   const veil = document.createElement('div');
   veil.className = 'boat-veil';
-  veil.innerHTML = '<span>Preparing your boat…</span>';
+  veil.innerHTML = '<span class="veil-mark"><span class="veil-a">a</span>Beam</span>'
+    + '<span class="veil-line" aria-hidden="true"></span>'
+    + '<span class="veil-note">Preparing your boat…</span>';
   stageEl.appendChild(veil);
 
-  // renderer
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+  // renderer — deliberately cheap for the priming frame: DPR 1, no shadow pass, no
+  // environment, flat water. upgradeQuality() below switches all of that on one tick
+  // after the first frame has been presented, which is what keeps time-to-first-frame
+  // short on a big desktop canvas (the shadow pass, DPR 2 and the PMREM bake were the
+  // whole of a single multi-second blocking task).
+  // A ?p= still stops the loop after it has composed its frame, so that frame has to
+  // survive the next composite — an unpreserved drawing buffer would come back empty.
+  // Normal visits never pay for it.
+  const wantsStill = /[?&]p=/.test(window.location.search);
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true, alpha: false, powerPreference: 'high-performance',
+    preserveDrawingBuffer: wantsStill,
+  });
   renderer.setClearColor(STAGE_BG, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.14;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = false;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   stageEl.appendChild(renderer.domElement);
   renderer.domElement.setAttribute('aria-hidden', 'true');
@@ -1186,18 +1246,17 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(STAGE_BG);
-  scene.fog = new THREE.FogExp2(STAGE_BG, 0.0092);
+  scene.fog = new THREE.FogExp2(0x123048, 0.0062);
 
-  const envMap = buildEnvironment(renderer);
-  scene.environment = envMap;
+  let envMap = null;   // baked in upgradeQuality()
 
-  const camera = new THREE.PerspectiveCamera(30, 1, 0.4, 420);
-  camera.position.set(...FRAMES.whole.pos);
+  const camera = new THREE.PerspectiveCamera(SHOTS[0].fov, 1, 0.4, 480);
+  camera.position.set(...SHOTS[0].pos);
 
   /* ---- lights ---- */
-  const key = new THREE.DirectionalLight(0xffeed4, 2.5);
+  const key = new THREE.DirectionalLight(0xffe3bc, 2.6);
   key.position.copy(SUN).multiplyScalar(26);
-  key.castShadow = true;
+  key.castShadow = false;   // on in upgradeQuality()
   key.shadow.mapSize.set(isSmall ? 1024 : 2048, isSmall ? 1024 : 2048);
   key.shadow.camera.left = -16;
   key.shadow.camera.right = 16;
@@ -1215,11 +1274,11 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   scene.add(fill);
 
   /* ---- water + contact shadow ---- */
-  const waterNormal = makeWaterNormal();
+  let waterNormal = null;   // generated in upgradeQuality()
   const waterAlpha = canvasRadial(512, [[0, '#fff'], [0.4, '#fff'], [1, '#000']]);
   const waterMat = new THREE.MeshStandardMaterial({
     color: 0x0d2140, roughness: 0.2, metalness: 0.0,
-    envMapIntensity: 0.7, normalMap: waterNormal,
+    envMapIntensity: 0.7,
     transparent: true, alphaMap: waterAlpha,
   });
   waterMat.normalScale.set(0.15, 0.15);
@@ -1237,70 +1296,175 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   contact.position.set(-1, 0.015, 0);
   scene.add(contact);
 
+  // waterline ripple: two soft rings standing off the hull, breathing out of phase
+  const rippleTex = makeRippleTexture();
+  const ripples = [];
+  for (const [i, sx] of [1.0, 1.18].entries()) {
+    const mat = new THREE.MeshBasicMaterial({
+      map: rippleTex, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, opacity: i ? 0.10 : 0.16, toneMapped: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(34 * sx, 15 * sx), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(-1, 0.02 + i * 0.004, 0);
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+    ripples.push({ mesh, mat, base: mat.opacity, phase: i * 2.6 });
+  }
+
   /* ---- yacht ---- */
-  const { group: boat, occluders, overlays, texs } = buildYacht(envMap, isSmall);
+  const { group: boat, occluders, overlays, pbrMats, texs } = buildYacht(null, isSmall);
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   for (const t of texs) t.anisotropy = Math.min(4, maxAniso);
-  waterNormal.anisotropy = Math.min(4, maxAniso);
   scene.add(boat);
 
-  /* ---- controls ---- */
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(...FRAMES.whole.target);
-  controls.enablePan = false;
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
-  controls.rotateSpeed = 0.6;
-  controls.minDistance = 14;
-  controls.maxDistance = 86;
-  controls.minPolarAngle = 0.2;
-  controls.maxPolarAngle = Math.PI / 2 - 0.035;
-  controls.autoRotate = !reducedMotion;
-  controls.autoRotateSpeed = 0.28;
-  controls.enableZoom = false;
-  controls.enableRotate = !isTouch;
-  renderer.domElement.style.touchAction = 'pan-y';
-  controls.update();
+  /* ---- camera rig -------------------------------------------------------------
+     `base` is the shot the rig is holding (or interpolating towards). Every frame the
+     drift, the settle and the viewer's free-look offset are added on top of it, so a
+     cut never fights the idle motion and an interrupted cut blends from wherever the
+     camera actually is. The wheel is never touched: the page always scrolls.        */
+  const UP = new THREE.Vector3(0, 1, 0);
+  const sph = new THREE.Spherical();
+  const vTmp = new THREE.Vector3();
+  const vTmp2 = new THREE.Vector3();
+  const base = { pos: new THREE.Vector3(...SHOTS[0].pos), target: new THREE.Vector3(...SHOTS[0].target), fov: SHOTS[0].fov };
+  let move = null, settleAt = -1, chapter = -1, still = false;
+  let lookYaw = 0, lookPitch = 0, dragId = null, lastX = 0, lastY = 0;
 
-  /* ---- activation pill (scroll-hijack guard) ---- */
-  const pill = document.createElement('button');
-  pill.type = 'button';
-  pill.className = 'boat-activate';
-  pill.textContent = isTouch ? ui.activateTouch : ui.activateDesktop;
-  stageEl.appendChild(pill);
-  let active = false;
-  function setActive(on) {
-    active = on;
-    stageEl.classList.toggle('is-active', on);
-    controls.enableZoom = on;
-    if (isTouch) {
-      controls.enableRotate = on;
-      renderer.domElement.style.touchAction = on ? 'none' : 'pan-y';
-      pill.textContent = on ? ui.activateDone : ui.activateTouch;
-    } else {
-      pill.hidden = on;
+  // cubic-bezier(.16,.86,.12,1) — a long, slow-out camera move with weight at the front
+  function bezierEase(x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const p1 = 0.16, p2 = 0.12;                 // x-control points
+    const cx = 3 * p1, bx = 3 * (p2 - p1) - cx, ax = 1 - cx - bx;
+    const cy = 3 * 0.86, by = 3 * (1 - 0.86) - cy, ay = 1 - cy - by;
+    let t = x;
+    for (let i = 0; i < 6; i++) {               // Newton solve for t(x)
+      const fx = ((ax * t + bx) * t + cx) * t - x;
+      const d = (3 * ax * t + 2 * bx) * t + cx;
+      if (Math.abs(d) < 1e-6) break;
+      t -= fx / d;
+      t = clamp(t, 0, 1);
     }
-  }
-  const onPill = (ev) => { ev.stopPropagation(); setActive(!active); };
-  pill.addEventListener('click', onPill);
-  const onCanvasDown = () => { if (!active) setActive(true); };
-  const onStageLeave = () => { if (active) setActive(false); };
-  if (!isTouch) {
-    renderer.domElement.addEventListener('pointerdown', onCanvasDown);
-    stageEl.addEventListener('mouseleave', onStageLeave);
+    return ((ay * t + by) * t + cy) * t;
   }
 
-  /* ---- idle auto-rotate ---- */
-  let idleTimer = null;
-  function pauseAutoRotate() {
-    controls.autoRotate = false;
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => { if (!reducedMotion && !flying) controls.autoRotate = true; }, 6000);
+  // Resolve a shot into a camera basis for the current viewport: distance is scaled so a
+  // portrait frame still holds a 24 m yacht, then the whole rig is trucked sideways /
+  // pedestalled so the yacht sits clear of whatever the layout puts on top of it.
+  const REF_ASPECT = 1.6;        // the aspect each shot is composed for
+  const MAX_VFOV = 50;           // past this the vertical perspective starts to bend
+
+  function resolveShot(i) {
+    const s = SHOTS[i];
+    const aspect = clamp(W / H, 0.35, 4);
+    // Hold the HORIZONTAL coverage the shot was composed with: on a narrower frame open
+    // the vertical angle first (a wider lens), and only once that would distort do we
+    // pull the camera back for the rest. A 24 m yacht then stays framed the same way at
+    // 21:9, at 4:3 and on a phone.
+    const hHalf = Math.atan(Math.tan(THREE.MathUtils.degToRad(s.fov) / 2) * REF_ASPECT);
+    let vHalf = Math.max(Math.atan(Math.tan(hHalf) / aspect), THREE.MathUtils.degToRad(s.fov) / 2);
+    const maxHalf = THREE.MathUtils.degToRad(MAX_VFOV) / 2;
+    let fit = 1;
+    if (vHalf > maxHalf) { fit = Math.tan(vHalf) / Math.tan(maxHalf); vHalf = maxHalf; }
+    // a tall frame is allowed to crop a little rather than hold the yacht at arm's length
+    if (aspect < 1.2) fit *= 1 - 0.22 * clamp((1.2 - aspect) / 0.55, 0, 1);
+
+    const target = new THREE.Vector3(...s.target);
+    const off = new THREE.Vector3(...s.pos).sub(target).multiplyScalar(fit);
+    const halfH = off.length() * Math.tan(vHalf);
+    const docked = W < 900;
+    // the sideways compose only matters while the card sits BESIDE the yacht: in a tall
+    // frame it floats above it, so the shot re-centres instead of hugging one edge
+    const fx = docked ? 0 : s.compose[0] * clamp((aspect - 0.75) / 0.85, 0, 1);
+    const fy = docked ? (s.mfy != null ? s.mfy : s.compose[1]) : s.compose[1];
+    const fwd = off.clone().negate().normalize();
+    const right = fwd.clone().cross(UP).normalize();
+    const up = right.clone().cross(fwd).normalize();
+    const shift = right.multiplyScalar(fx * halfH * aspect).add(up.multiplyScalar(fy * halfH));
+    target.add(shift);
+    return { pos: target.clone().add(off), target, fov: THREE.MathUtils.radToDeg(vHalf * 2) };
   }
-  const onCtrlStart = () => { pauseAutoRotate(); stageEl.classList.add('is-dragging'); };
-  const onCtrlEnd = () => { stageEl.classList.remove('is-dragging'); };
-  controls.addEventListener('start', onCtrlStart);
-  controls.addEventListener('end', onCtrlEnd);
+
+  function startMove(to) {
+    const fromS = new THREE.Spherical().setFromVector3(vTmp.subVectors(base.pos, base.target));
+    const toS = new THREE.Spherical().setFromVector3(vTmp.subVectors(to.pos, to.target));
+    let dTheta = toS.theta - fromS.theta;
+    while (dTheta > Math.PI) dTheta -= Math.PI * 2;
+    while (dTheta < -Math.PI) dTheta += Math.PI * 2;
+    move = {
+      t0: performance.now(), dur: 1100,
+      fromT: base.target.clone(), toT: to.target.clone(),
+      fromS, toS, dTheta, fromFov: base.fov, toFov: to.fov,
+    };
+  }
+
+  function advanceMove() {
+    if (!move) return;
+    const k = clamp((performance.now() - move.t0) / move.dur, 0, 1);
+    const e = bezierEase(k);
+    base.target.lerpVectors(move.fromT, move.toT, e);
+    sph.radius = move.fromS.radius + (move.toS.radius - move.fromS.radius) * e;
+    sph.phi = move.fromS.phi + (move.toS.phi - move.fromS.phi) * e;
+    sph.theta = move.fromS.theta + move.dTheta * e;
+    base.pos.copy(base.target).add(vTmp.setFromSpherical(sph));
+    base.fov = move.fromFov + (move.toFov - move.fromFov) * e;
+    if (k >= 1) { move = null; settleAt = performance.now(); }
+  }
+
+  // the drifted, free-looked camera for this frame
+  function applyCamera(t) {
+    let dYaw = 0, dPitch = 0, dRad = 1;
+    if (!reducedMotion) {
+      dYaw = Math.sin(t * 0.107) * 0.013 + Math.sin(t * 0.041 + 1.1) * 0.009;
+      dPitch = Math.sin(t * 0.079 + 0.7) * 0.0055;
+      dRad = 1 + Math.sin(t * 0.058) * 0.005;
+      if (settleAt >= 0) {                       // a short damped settle after each cut
+        const s = (performance.now() - settleAt) / 1000;
+        if (s < 1) dRad *= 1 + Math.exp(-5.2 * s) * Math.sin(s * 13.5) * 0.008;
+        else settleAt = -1;
+      }
+    }
+    sph.setFromVector3(vTmp.subVectors(base.pos, base.target));
+    sph.theta += dYaw + lookYaw;
+    sph.phi = clamp(sph.phi + dPitch + lookPitch, 0.14, Math.PI / 2 + 0.10);
+    sph.radius *= dRad;
+    camera.position.copy(base.target).add(vTmp2.setFromSpherical(sph));
+    if (camera.position.y < 0.6) camera.position.y = 0.6;
+    camera.lookAt(base.target);
+    if (Math.abs(camera.fov - base.fov) > 0.004) { camera.fov = base.fov; camera.updateProjectionMatrix(); }
+  }
+
+  /* ---- free-look: drag the canvas for a small offset that eases back ---- */
+  function onDown(ev) {
+    if (ev.button != null && ev.button !== 0) return;
+    still = false;
+    dragId = ev.pointerId;
+    lastX = ev.clientX; lastY = ev.clientY;
+    stageEl.classList.add('is-dragging');
+    try { renderer.domElement.setPointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+    loop();
+  }
+  function onMove(ev) {
+    if (dragId !== ev.pointerId) return;
+    const dx = (ev.clientX - lastX) / Math.max(1, W);
+    const dy = (ev.clientY - lastY) / Math.max(1, H);
+    lastX = ev.clientX; lastY = ev.clientY;
+    lookYaw = clamp(lookYaw - dx * (isTouch ? 0.85 : 1.1), -0.17, 0.17);
+    lookPitch = clamp(lookPitch - dy * 0.5, -0.085, 0.085);
+    forceFrame = true;
+    loop();
+  }
+  function onUp(ev) {
+    if (dragId !== ev.pointerId) return;
+    dragId = null;
+    stageEl.classList.remove('is-dragging');
+  }
+  renderer.domElement.addEventListener('pointerdown', onDown);
+  renderer.domElement.addEventListener('pointermove', onMove);
+  renderer.domElement.addEventListener('pointerup', onUp);
+  renderer.domElement.addEventListener('pointercancel', onUp);
+  renderer.domElement.style.touchAction = 'pan-y';   // vertical touch always scrolls
 
   /* ---- zone highlighting ---- */
   function setHover(zone, on) {
@@ -1343,58 +1507,114 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     chipHandlers.push([c, onClick, onEnter, onLeave]);
   });
 
-  /* ---- fly-to ---- */
-  let flying = null;
-  const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
-  function flyTo(zone) {
-    const f = FRAMES[zone] || FRAMES.whole;
-    const fromPos = camera.position.clone(), fromT = controls.target.clone();
-    const toPos = new THREE.Vector3(...f.pos), toT = new THREE.Vector3(...f.target);
-    // no animation when the loop is gated (hidden tab / stage off-screen) — snap, so the
-    // next frame the stage draws is already framed on the new zone
-    if (reducedMotion || !visible || !pageVisible) {
-      camera.position.copy(toPos); controls.target.copy(toT); controls.update();
-      flying = null; controls.enabled = true;
-      return;
-    }
-    flying = { t0: performance.now(), dur: 760, fromPos, fromT, toPos, toT };
-    controls.autoRotate = false;
-    controls.enabled = false;
-  }
+  /* ---- chapters ----------------------------------------------------------------
+     enterChapter() is the single entry point: it writes the card, the ticks, the
+     markers and the overlay for the chapter's zone, then cuts the camera to that
+     chapter's composed shot. chapters.js calls it from the scroll position; a chip or
+     a marker click asks the page to scroll there instead (see setNavigator), so the
+     scroll and the shot can never disagree.                                         */
 
-  function selectZone(zone) {
-    const h = byZone.get(zone);
-    if (!h) return;
-    panelEl.querySelector('.panel-eyebrow').textContent = h.eyebrow;
-    panelEl.querySelector('.panel-title').textContent = h.title;
-    panelEl.querySelector('.panel-body').textContent = h.body;
-    const cta = panelEl.querySelector('.panel-cta');
-    cta.textContent = h.cta.label;
-    cta.href = h.cta.href;
-    chips.forEach((c) => c.setAttribute('aria-pressed', c.dataset.zone === zone ? 'true' : 'false'));
+  // only touch what actually changes: rewriting identical text would invalidate the
+  // overlay layer (and re-announce the aria-live card) for nothing
+  const setText = (el, v) => { if (el && el.textContent !== v) el.textContent = v; };
+
+  function writeCard(zone) {
+    const h = zone ? byZone.get(zone) : null;
+    if (h) {
+      setText(panelEl.querySelector('.panel-eyebrow'), h.eyebrow);
+      setText(panelEl.querySelector('.panel-title'), h.title);
+      setText(panelEl.querySelector('.panel-body'), h.body);
+      const cta = panelEl.querySelector('.panel-cta');
+      setText(cta, h.cta.label);
+      if (cta.getAttribute('href') !== h.cta.href) cta.href = h.cta.href;
+      panelEl.dataset.zone = zone;
+      panelEl.dataset.side = CARD_SIDE[zone] || 'right';
+      panelEl.classList.add('is-open');
+    } else {
+      panelEl.classList.remove('is-open');
+    }
+    chips.forEach((c) => c.setAttribute('aria-pressed', h && c.dataset.zone === zone ? 'true' : 'false'));
     markers.forEach((m, z) => m.btn.classList.toggle('is-selected', z === zone));
     Object.entries(overlays).forEach(([z, o]) => {
       o.selected = z === zone;
-      if (z === zone) o.flash = 0.18;
+      if (z === zone) o.flash = 0.2;
     });
-    flyTo(zone);
-    pauseAutoRotate();
-    forceFrame = true;   // chips live below the stage; redraw even if the loop is gated
+  }
+
+  function enterChapter(i, opts = {}) {
+    const n = clamp(Math.round(i), 0, SHOTS.length - 1);
+    const shot = SHOTS[n];
+    const same = n === chapter;
+    chapter = n;
+    writeCard(shot.zone);
+    stageEl.classList.toggle('is-wide', shot.key === 'wide');
+    const to = resolveShot(n);
+    // a cut is only animated when it can actually be seen — otherwise snap, so the next
+    // frame the stage draws is already composed on the new chapter
+    if (opts.instant || reducedMotion || firstFrame || !visible || !pageVisible) {
+      base.pos.copy(to.pos); base.target.copy(to.target); base.fov = to.fov;
+      move = null; settleAt = -1;
+    } else if (!same) {
+      startMove(to);
+    }
+    forceFrame = true;
     loop();
   }
 
+  // re-resolve the held shot for a new viewport without breaking a cut in flight
+  function reframe() {
+    if (chapter < 0) return;
+    const to = resolveShot(chapter);
+    if (move) {
+      move.toT.copy(to.target);
+      move.toS.setFromVector3(vTmp.subVectors(to.pos, to.target));
+      move.toFov = to.fov;
+      let d = move.toS.theta - move.fromS.theta;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      move.dTheta = d;
+    } else {
+      base.pos.copy(to.pos); base.target.copy(to.target); base.fov = to.fov;
+    }
+    forceFrame = true;
+  }
+
+  // Still mode: hold the composed frame and stop driving the loop (deep links and
+  // ?p= stills, and anything that wants a deterministic frame). Any interaction or a
+  // chapter change with drift wanted turns it back off.
+  function setStill(on) {
+    still = !!on;
+    if (!still) { forceFrame = true; loop(); }
+  }
+
+  // the page-level navigator (a smooth scroll to the chapter). Without one — boat.js
+  // used on its own — selecting a zone just cuts to it.
+  let navigate = (i) => enterChapter(i);
+  function setNavigator(fn) { navigate = typeof fn === 'function' ? fn : ((i) => enterChapter(i)); }
+
+  function chapterOf(zone) {
+    const i = SHOT_OF_ZONE.get(zone);
+    return i == null ? 0 : i;
+  }
+
+  function selectZone(zone) {
+    if (!byZone.has(zone)) return;
+    navigate(chapterOf(zone), zone);
+  }
+
   /* ---- sizing ---- */
-  let W = 1, H = 1;
+  let W = 1, H = 1, dprCap = 1;
   function resize() {
     W = Math.max(1, stageEl.clientWidth);
     H = Math.max(1, stageEl.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, W < 768 ? 1.5 : 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
     renderer.setSize(W, H, false);
     labelRenderer.setSize(W, H);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
   }
-  const ro = new ResizeObserver(resize);
+  // a resize clears the drawing buffer, so always redraw — even when holding a still
+  const ro = new ResizeObserver(() => { resize(); reframe(); forceFrame = true; loop(); });
   ro.observe(stageEl);
   resize();
 
@@ -1405,10 +1625,42 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   const onVis = () => { pageVisible = document.visibilityState === 'visible'; if (pageVisible) loop(); };
   document.addEventListener('visibilitychange', onVis);
 
+  /* ---- deferred quality pass ----------------------------------------------------
+     Everything the first frame can live without: the PMREM sky that the gelcoat, the
+     smoked glass and the stainless reflect, the shadow pass, the water normal map and
+     the real device pixel ratio. Materials are marked for recompile once, here, off
+     the critical path.                                                             */
+  let veilTimer = null, qualityTimer = null, upgraded = false;
+  function upgradeQuality() {
+    qualityTimer = null;
+    if (upgraded || disposed) return;
+    upgraded = true;
+    envMap = buildEnvironment(renderer);
+    scene.environment = envMap;
+    // the same sky, heavily blurred and pulled down, as the backdrop: a horizon to sit
+    // the water against instead of a flat navy wall
+    scene.background = envMap;
+    scene.backgroundBlurriness = 0.22;
+    scene.backgroundIntensity = 0.38;
+    for (const m of pbrMats) { m.envMap = envMap; m.needsUpdate = true; }
+    waterNormal = makeWaterNormal();
+    waterNormal.anisotropy = Math.min(4, maxAniso);
+    waterMat.normalMap = waterNormal;
+    waterMat.needsUpdate = true;
+    key.castShadow = true;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.needsUpdate = true;
+    dprCap = W < 768 ? 1.5 : 2;
+    resize();
+    reframe();
+    forceFrame = true;
+    loop();
+  }
+
   /* ---- render loop ---- */
   const raycaster = new THREE.Raycaster();
   const tmp = new THREE.Vector3();
-  let frame = 0, firstFrame = true;
+  let frame = 0, firstFrame = true, t = 0;
   const clock = new THREE.Clock();
   function loop() {
     if (disposed) return;
@@ -1421,24 +1673,33 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     const gated = !visible || !pageVisible;
     if (gated && !firstFrame && !forceFrame) return;
     forceFrame = false;
-    const t = clock.getElapsedTime();
+    // own clock: capped so a long gated gap resumes smoothly instead of jumping
+    const dt = Math.min(0.05, clock.getDelta());
+    t += dt;
     frame++;
 
-    if (flying) {
-      const k = Math.min(1, (performance.now() - flying.t0) / flying.dur);
-      const e = easeInOut(k);
-      camera.position.lerpVectors(flying.fromPos, flying.toPos, e);
-      controls.target.lerpVectors(flying.fromT, flying.toT, e);
-      if (k >= 1) { flying = null; controls.enabled = true; }
+    advanceMove();
+    if (!dragId && (lookYaw || lookPitch)) {
+      const f = Math.pow(0.5, dt / 0.34);          // ~2 s back to the composed framing
+      lookYaw *= f; lookPitch *= f;
+      if (Math.abs(lookYaw) < 1e-4) lookYaw = 0;
+      if (Math.abs(lookPitch) < 1e-4) lookPitch = 0;
     }
     if (!reducedMotion) {
       boat.position.y = Math.sin(t * 0.55) * 0.035;
       boat.rotation.z = Math.sin(t * 0.43) * 0.0045;
       boat.rotation.x = Math.sin(t * 0.33) * 0.0026;
-      waterNormal.offset.x = t * 0.0075;
-      waterNormal.offset.y = t * 0.0042;
+      if (waterNormal) {
+        waterNormal.offset.x = t * 0.0075;
+        waterNormal.offset.y = t * 0.0042;
+      }
+      for (const r of ripples) {
+        const w = Math.sin(t * 0.30 + r.phase);
+        r.mesh.scale.setScalar(1 + w * 0.022);
+        r.mat.opacity = r.base * (0.72 + 0.28 * w);
+      }
     }
-    controls.update();
+    applyCamera(t);
 
     // zone highlight easing
     for (const o of Object.values(overlays)) {
@@ -1471,32 +1732,40 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     if (firstFrame) {
       firstFrame = false;
       veil.classList.add('is-gone');
-      window.setTimeout(() => veil.remove(), 600);
+      veilTimer = window.setTimeout(() => veil.remove(), 600);
+      // hand the frame to the compositor, then load the expensive half. A timer, not
+      // rAF/idle: this has to run in a hidden tab too.
+      qualityTimer = window.setTimeout(upgradeQuality, 80);
     }
-    if (gated) return;   // that was the priming frame; wait to be woken again
+    // that was a priming / still frame; wait to be woken again. Under reduced motion
+    // nothing drifts, so the loop only runs while a cut or a drag is actually moving.
+    const quiet = (still && !move)
+      || (reducedMotion && !move && dragId === null && !lookYaw && !lookPitch);
+    if (gated || quiet) return;
     raf = requestAnimationFrame(loop);
   }
+  enterChapter(0, { instant: true });
   loop();
 
   /* ---- teardown ---- */
   function destroy() {
     disposed = true;
     if (raf) cancelAnimationFrame(raf);
-    if (idleTimer) clearTimeout(idleTimer);
+    if (veilTimer) clearTimeout(veilTimer);
+    if (qualityTimer) clearTimeout(qualityTimer);
     ro.disconnect();
     io.disconnect();
     document.removeEventListener('visibilitychange', onVis);
-    controls.removeEventListener('start', onCtrlStart);
-    controls.removeEventListener('end', onCtrlEnd);
-    pill.removeEventListener('click', onPill);
-    renderer.domElement.removeEventListener('pointerdown', onCanvasDown);
-    stageEl.removeEventListener('mouseleave', onStageLeave);
+    renderer.domElement.removeEventListener('pointerdown', onDown);
+    renderer.domElement.removeEventListener('pointermove', onMove);
+    renderer.domElement.removeEventListener('pointerup', onUp);
+    renderer.domElement.removeEventListener('pointercancel', onUp);
     chipHandlers.forEach(([c, a, b, d]) => {
       c.removeEventListener('click', a);
       c.removeEventListener('mouseenter', b);
       c.removeEventListener('mouseleave', d);
     });
-    controls.dispose();
+    markers.forEach((m) => { if (m.obj.parent) m.obj.parent.remove(m.obj); m.btn.remove(); });
 
     const seenGeo = new Set(), seenMat = new Set(), seenTex = new Set();
     scene.traverse((o) => {
@@ -1512,11 +1781,23 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
         m.dispose();
       }
     });
-    envMap.dispose();
+    if (envMap) envMap.dispose();
+    if (waterNormal) waterNormal.dispose();
     scene.environment = null;
     renderer.dispose();
+    labelRenderer.domElement.remove();
     stageEl.innerHTML = '';
+    stageEl.classList.remove('is-wide', 'is-dragging');
   }
 
-  return { selectZone, destroy };
+  return {
+    selectZone,
+    destroy,
+    enterChapter,
+    reframe,
+    setStill,
+    setNavigator,
+    chapterOf,
+    chapters: SHOTS.map((s) => ({ key: s.key, zone: s.zone })),
+  };
 }
