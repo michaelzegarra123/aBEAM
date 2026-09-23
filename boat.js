@@ -3,10 +3,12 @@
 // No model files, no image files, no fetches: the hull and superstructure are lofted /
 // extruded in code, the teak and water textures are drawn on a <canvas>, and the
 // environment map is a shader sky run through PMREMGenerator.
-// Exposes: initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui }) → { selectZone, destroy } | null
+// Exposes: initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui, onNavigate })
+//   → { stops, showZone, selectZone, setVoyageProgress, getTriangleInfo, destroy } | null
+// The camera is not orbit-controlled: it rides a spline through the voyage stops (see § 7),
+// driven by page scroll from voyage.js. Dragging only adds a free-look offset on top.
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -328,18 +330,13 @@ function makeTeakTexture() {
   return tex;
 }
 
-// value-noise height field → tangent-space normal map for the water
-function makeWaterNormal() {
-  const S = 256;
-  const c = document.createElement('canvas');
-  c.width = c.height = S;
-  const ctx = c.getContext('2d');
-  const img = ctx.createImageData(S, S);
+// tileable value-noise field, summed over the octaves given
+function noiseField(S, octaves, seed0) {
   const h = new Float32Array(S * S);
-  let seed = 77771;
+  let seed = seed0;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
   const sm = (a) => a * a * (3 - 2 * a);
-  for (const [n, amp] of [[4, 1], [8, 0.52], [16, 0.26], [32, 0.13]]) {
+  for (const [n, amp] of octaves) {
     const grid = new Float32Array(n * n);
     for (let i = 0; i < n * n; i++) grid[i] = rnd();
     for (let y = 0; y < S; y++) {
@@ -354,7 +351,22 @@ function makeWaterNormal() {
       }
     }
   }
-  const STR = 2.6;
+  return h;
+}
+
+// Water normal map: two noise scales blended — a long low swell carrying a finer chop.
+// One tile drifts across the whole disc, so both scales move together at real-world scale.
+function makeWaterNormal() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const swell = noiseField(S, [[2, 1], [4, 0.55]], 77771);
+  const chop = noiseField(S, [[11, 1], [23, 0.5], [46, 0.22]], 31337);
+  const h = new Float32Array(S * S);
+  for (let i = 0; i < h.length; i++) h[i] = swell[i] * 0.86 + chop[i] * 0.30;
+  const STR = 3.1;
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const l = h[y * S + ((x - 1 + S) % S)], r = h[y * S + ((x + 1) % S)];
@@ -371,7 +383,51 @@ function makeWaterNormal() {
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(24, 24);
+  tex.repeat.set(15, 15);
+  return tex;
+}
+
+// fine canvas-grain, used as a roughnessMap so the gelcoat is never perfectly uniform
+function makeGrainTexture() {
+  const S = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const h = noiseField(S, [[8, 1], [16, 0.5], [32, 0.3], [64, 0.18]], 4242);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < h.length; i++) { if (h[i] < lo) lo = h[i]; if (h[i] > hi) hi = h[i]; }
+  const span = (hi - lo) || 1;
+  for (let i = 0; i < h.length; i++) {
+    // a narrow band around white: roughnessMap multiplies, so this only ever dulls slightly
+    const v = 214 + ((h[i] - lo) / span) * 41;
+    const o = i * 4;
+    img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+    img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3.5, 3.5);
+  return tex;
+}
+
+// a soft ring, used for the ripple that travels out from the waterline
+function makeRingTexture() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.74, 'rgba(255,255,255,0)');
+  g.addColorStop(0.86, 'rgba(255,255,255,.5)');
+  g.addColorStop(0.93, 'rgba(255,255,255,.18)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -392,7 +448,7 @@ function canvasRadial(size, stops) {
    A gradient sky with a sun disc, rendered into a PMREM cubemap. This is what makes
    the gelcoat, the smoked glass and the stainless read as real materials.        */
 
-const SUN = new THREE.Vector3(14, 18, 10).normalize();
+const SUN = new THREE.Vector3(17, 6.8, -3.6).normalize();
 
 const SKY_VERT = /* glsl */`
 varying vec3 vDir;
@@ -407,6 +463,7 @@ uniform vec3 horizon;
 uniform vec3 below;
 uniform vec3 sunDir;
 uniform vec3 sunColor;
+uniform vec3 glowColor;
 uniform float gain;
 varying vec3 vDir;
 void main() {
@@ -416,8 +473,11 @@ void main() {
     ? mix(horizon, zenith, pow(clamp(y, 0.0, 1.0), 0.42))
     : mix(horizon, below, pow(clamp(-y, 0.0, 1.0), 0.30));
   float s = dot(d, sunDir);
-  c += sunColor * smoothstep(0.9974, 0.9994, s) * 16.0;
-  c += sunColor * pow(max(s, 0.0), 40.0) * 0.55;
+  // the sun: a hard disc, a tight bloom, and a broad warm wash that sits on the horizon
+  c += sunColor * smoothstep(0.9968, 0.9992, s) * 30.0;
+  c += sunColor * pow(max(s, 0.0), 44.0) * 1.15;
+  c += glowColor * pow(max(s, 0.0), 5.5) * 0.42;
+  c += glowColor * pow(1.0 - abs(y), 9.0) * 0.30;
   gl_FragColor = vec4(c * gain, 1.0);
 }`;
 
@@ -431,12 +491,13 @@ function buildEnvironment(renderer) {
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      zenith: { value: new THREE.Color(0x2f6fb4) },
-      horizon: { value: new THREE.Color(0xf7e2c2) },
-      below: { value: new THREE.Color(0x091a30) },
+      zenith: { value: new THREE.Color(0x2a6ab5) },
+      horizon: { value: new THREE.Color(0xffd9a0) },
+      below: { value: new THREE.Color(0x0a1c33) },
       sunDir: { value: SUN.clone() },
-      sunColor: { value: new THREE.Color(0xfff3de) },
-      gain: { value: 1.5 },
+      sunColor: { value: new THREE.Color(0xffeccd) },
+      glowColor: { value: new THREE.Color(0xffb96b) },
+      gain: { value: 1.34 },
     },
   });
   const sky = new THREE.Mesh(geo, mat);
@@ -506,16 +567,26 @@ function buildYacht(env, isSmall) {
   const M = (m) => { mats.push(m); return m; };
 
   const teakTex = makeTeakTexture();
-  texs.push(teakTex);
+  const grainTex = makeGrainTexture();
+  texs.push(teakTex, grainTex);
 
   /* ---- materials ---- */
+  // roughnessMap = the canvas grain: gelcoat is hand-laid, never perfectly even. It only
+  // ever dulls the surface slightly (the map is a narrow band just under white).
   const gelcoat = M(new THREE.MeshPhysicalMaterial({
-    color: 0xe7e3d8, roughness: 0.30, metalness: 0.0,
-    clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.05,
+    color: 0xe9e5da, roughness: 0.34, metalness: 0.0, roughnessMap: grainTex,
+    clearcoat: 1, clearcoatRoughness: 0.07, envMapIntensity: 1.05,
   }));
-  const gelcoatSoft = M(new THREE.MeshPhysicalMaterial({
-    color: 0xdcd8cd, roughness: 0.52, metalness: 0.0,
-    clearcoat: 0.4, clearcoatRoughness: 0.2, envMapIntensity: 0.85,
+  const gelcoatSoft = M(new THREE.MeshStandardMaterial({
+    color: 0xdcd8cd, roughness: 0.50, metalness: 0.0, roughnessMap: grainTex, envMapIntensity: 0.85,
+  }));
+  // the cheap ambient-occlusion pass: the same surfaces, tinted down, used anywhere the sky
+  // is blocked — cockpit sole, hardtop liners, inboard faces, under the rubrail and platform
+  const gelcoatShade = M(new THREE.MeshStandardMaterial({
+    color: 0xa9a69d, roughness: 0.58, metalness: 0.0, roughnessMap: grainTex, envMapIntensity: 0.42,
+  }));
+  const frameAlu = M(new THREE.MeshStandardMaterial({
+    color: 0x2f343b, roughness: 0.36, metalness: 0.82, envMapIntensity: 0.85,
   }));
   const navy = M(new THREE.MeshPhysicalMaterial({
     color: 0x0f2340, roughness: 0.26, metalness: 0.0,
@@ -534,18 +605,22 @@ function buildYacht(env, isSmall) {
   }));
   const steel = M(new THREE.MeshStandardMaterial({ color: 0xdde2e9, roughness: 0.22, metalness: 1.0, envMapIntensity: 1.0 }));
   const teak = M(new THREE.MeshStandardMaterial({ color: 0xffffff, map: teakTex, roughness: 0.48, metalness: 0.0, envMapIntensity: 0.7 }));
+  const teakShade = M(new THREE.MeshStandardMaterial({ color: 0x9c9890, map: teakTex, roughness: 0.55, metalness: 0.0, envMapIntensity: 0.34 }));
   const teakGloss = M(new THREE.MeshPhysicalMaterial({
     color: 0xffffff, map: teakTex, roughness: 0.2, metalness: 0.0,
     clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 0.95,
   }));
   const cushion = M(new THREE.MeshStandardMaterial({ color: 0xded7c6, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.4 }));
   const rubber = M(new THREE.MeshStandardMaterial({ color: 0x15191f, roughness: 0.78, metalness: 0.0, envMapIntensity: 0.4 }));
+  const fenderMat = M(new THREE.MeshStandardMaterial({ color: 0xe6e3da, roughness: 0.66, metalness: 0.0, envMapIntensity: 0.5 }));
+  const ropeMat = M(new THREE.MeshStandardMaterial({ color: 0xc9bda4, roughness: 0.92, metalness: 0.0, envMapIntensity: 0.3 }));
   const interior = M(new THREE.MeshStandardMaterial({ color: 0x10161f, roughness: 0.82, metalness: 0.0, envMapIntensity: 0.25 }));
   const dash = M(new THREE.MeshStandardMaterial({ color: 0x1b2028, roughness: 0.45, metalness: 0.1, envMapIntensity: 0.6 }));
   const lampR = M(new THREE.MeshStandardMaterial({ color: 0x3a0a10, emissive: 0xd8343f, emissiveIntensity: 1.1, roughness: 0.3 }));
   const lampG = M(new THREE.MeshStandardMaterial({ color: 0x062615, emissive: 0x2fc07a, emissiveIntensity: 1.1, roughness: 0.3 }));
   const lampW = M(new THREE.MeshStandardMaterial({ color: 0x2a2c2e, emissive: 0xfff2d8, emissiveIntensity: 0.9, roughness: 0.3 }));
   for (const m of mats) m.envMap = env;
+  grainTex.anisotropy = 2;
 
   const add = (geo, mat, cast = false, recv = false) => {
     const m = new THREE.Mesh(geo, mat);
@@ -696,6 +771,8 @@ function buildYacht(env, isSmall) {
   for (const s of [1, -1]) {
     add(new THREE.TubeGeometry(sheerCurve(s, -0.125, -0.015), 64, 0.058, 7, false), rubber);
   }
+  // the shadow the rubrail throws down the topsides: a thin tinted band just beneath it
+  add(bothSides((s) => hullPatch(s, 0.015, 0.985, () => 0.90, 0.042, 0.006, 0.04, 44, 1)), gelcoatShade);
 
   /* ---------------------------------------------------------------- decks */
   // main deck, cambered, from the saloon bulkhead forward to the stem
@@ -742,17 +819,17 @@ function buildYacht(env, isSmall) {
     const hw = sheerHalf(t) - 0.30;
     return new THREE.Vector3(tx(t), COCKPIT.sole, -hw + 2 * hw * b);
   }, true));
-  add(soleGeo, teak, false, true);
+  add(soleGeo, teakShade, false, true);   // under the hardtop: never sees the sky
   add(bothSides((s) => gridGeometry(14, 2, (a, b) => {
     const t = tC0 + (tC1 - tC0) * a;
     const hw = sheerHalf(t) - 0.30 + 0.11 * b;
     return new THREE.Vector3(tx(t), COCKPIT.sole + (deckEdgeY(t) - 0.02 - COCKPIT.sole) * b, s * hw);
-  }, s < 0 ? false : true)), gelcoatSoft, false, true);
+  }, s < 0 ? false : true)), gelcoatShade, false, true);
   // aft face of the cockpit (the transom locker) and the riser under the side decks
   const lockerW = (sheerHalf(tC0) - 0.30) * 2;
-  const locker = add(new THREE.BoxGeometry(0.16, deckEdgeY(0) - COCKPIT.sole, lockerW), gelcoatSoft, false, true);
+  const locker = add(new THREE.BoxGeometry(0.16, deckEdgeY(0) - COCKPIT.sole, lockerW), gelcoatShade, false, true);
   locker.position.set(tx(tC0) + 0.08, (COCKPIT.sole + deckEdgeY(0) - 0.02) / 2, 0);
-  const riser = add(new THREE.BoxGeometry(0.16, 0.86, houseHalf(HOUSE.x0) * 2), gelcoatSoft, true, false);
+  const riser = add(new THREE.BoxGeometry(0.16, 0.86, houseHalf(HOUSE.x0) * 2), gelcoatShade, true, false);
   riser.position.set(HOUSE.x0 - 0.12, COCKPIT.sole + 0.43, 0);
 
   // swim platform + boarding ladder
@@ -767,7 +844,7 @@ function buildYacht(env, isSmall) {
     const drop = 0.32 * (0.35 + 0.65 * a);
     const th = b * Math.PI;
     return new THREE.Vector3(x, PLATFORM.top - 0.17 - drop * Math.sin(th), Math.cos(th) * hw);
-  }, true), gelcoatSoft, true, false);
+  }, true), gelcoatShade, true, false);
   // boarding step on the platform, under the beach-club door
   const step1 = add(planarUV(padGeo(0.5, 1.6, 0.14, 0.07, 0.04), 1.2), teakGloss, true, true);
   step1.position.set(-11.15, PLATFORM.top, 0);
@@ -807,6 +884,26 @@ function buildYacht(env, isSmall) {
     off: 0.012, tumble: 0.05, rake: 0.42, rakeX0: 1.4, rakeX1: HOUSE.x1, crease: 0.42,
   });
   add(houseGlassGeo, glass);
+  // thin alloy frames along the top and bottom edges of the glass band. The band is a raked,
+  // tumbled prism, so the frames repeat the same two transforms at their own height.
+  const GLO = HOUSE.winLo + 0.035, GHI = HOUSE.winHi - 0.035;
+  function glassBand(yA, yB, off) {
+    const st = boxStations(HOUSE, off);
+    const n = st.length - 1;
+    const at = (u) => {
+      const f = u * n, i = Math.min(n - 1, Math.floor(f)), k = f - i;
+      return [st[i][0] + (st[i + 1][0] - st[i][0]) * k, st[i][1] + (st[i + 1][1] - st[i][1]) * k];
+    };
+    return bothSides((s) => gridGeometry(n, 1, (u, v) => {
+      const y = yA + (yB - yA) * v;
+      const uH = clamp((y - GLO) / (GHI - GLO), 0, 1);
+      const [x0, hw] = at(u);
+      const x = x0 - 0.42 * uH * smooth(clamp((x0 - 1.4) / (HOUSE.x1 - 1.4), 0, 1));
+      return new THREE.Vector3(x, y, s * hw * (1 - 0.05 * uH));
+    }, s < 0));
+  }
+  add(glassBand(GLO - 0.015, GLO + 0.032, 0.028), frameAlu);
+  add(glassBand(GHI - 0.032, GHI + 0.015, 0.028), frameAlu);
   // mullions
   for (const s of [1, -1]) {
     for (const x of [-4.2, -2.4, -0.6, 1.2, 2.5]) {
@@ -844,7 +941,7 @@ function buildYacht(env, isSmall) {
     off: 0.01, tumble: 0.05, rake: 0.42, rakeX0: -0.4, rakeX1: FLY.x1, crease: 0.42,
   }), glassOpen);
   const hardtop = add(prism(HARD_CFG, FLY.hardLo, FLY.hardHi, { bevel: 0.05, crease: 0.42 }), gelcoat, true, false);
-  const hardtopLiner = add(prism(HARD_CFG, FLY.hardLo - 0.03, FLY.hardLo + 0.01, { off: -0.07, crease: 0.42 }), gelcoatSoft);
+  const hardtopLiner = add(prism(HARD_CFG, FLY.hardLo - 0.03, FLY.hardLo + 0.01, { off: -0.07, crease: 0.42 }), gelcoatShade);
   add(prism(HARD_CFG, FLY.hardLo + 0.005, FLY.hardLo + 0.055, { off: 0.008, crease: 0.42 }), navy);
   // forward hardtop posts
   for (const s of [1, -1]) {
@@ -871,7 +968,7 @@ function buildYacht(env, isSmall) {
     back.position.set(0.28, FLY.deck + 0.58, s * 0.62);
   }
   // flybridge aft settee + sun pad
-  const fbSetteeBase = add(new THREE.BoxGeometry(0.72, 0.4, 2.5), gelcoatSoft);
+  const fbSetteeBase = add(new THREE.BoxGeometry(0.72, 0.4, 2.5), gelcoatShade);
   fbSetteeBase.position.set(-3.5, FLY.deck + 0.2, 0);
   const fbSeat = add(padGeo(0.8, 2.5, 0.16, 0.1, 0.05), cushion, true);
   fbSeat.position.set(-3.5, FLY.deck + 0.4, 0);
@@ -917,13 +1014,13 @@ function buildYacht(env, isSmall) {
   /* ---------------------------------------------------------------- cockpit furniture */
   // L-settee: athwartships aft + down the port side
   const aftBaseW = 0.78;
-  const setteeAft = add(new THREE.BoxGeometry(aftBaseW, 0.46, 4.4), gelcoatSoft, true, true);
+  const setteeAft = add(new THREE.BoxGeometry(aftBaseW, 0.46, 4.4), gelcoatShade, true, true);
   setteeAft.position.set(-10.0, COCKPIT.sole + 0.23, 0);
   const setteeAftPad = add(padGeo(0.86, 4.4, 0.17, 0.1, 0.05), cushion, true);
   setteeAftPad.position.set(-10.0, COCKPIT.sole + 0.46, 0);
   const setteeAftBack = add(padGeo(0.2, 4.4, 0.5, 0.08, 0.05), cushion, true);
   setteeAftBack.position.set(-10.42, COCKPIT.sole + 0.6, 0);
-  const setteeSide = add(new THREE.BoxGeometry(2.1, 0.46, 0.76), gelcoatSoft, true, true);
+  const setteeSide = add(new THREE.BoxGeometry(2.1, 0.46, 0.76), gelcoatShade, true, true);
   setteeSide.position.set(-8.6, COCKPIT.sole + 0.23, -1.9);
   const setteeSidePad = add(padGeo(2.1, 0.84, 0.17, 0.1, 0.05), cushion, true);
   setteeSidePad.position.set(-8.6, COCKPIT.sole + 0.46, -1.9);
@@ -1067,6 +1164,29 @@ function buildYacht(env, isSmall) {
   }
   for (const s of [1, -1]) for (const x of [-10.1, -6.9, 0.4, 10.0]) cleatAt(x, s);
 
+  // fenders hung over the starboard rail, the way she sits at the dock
+  for (const t of [tOf(-7.6), tOf(-5.4)]) {
+    const anchor = sidePoint(t, 0.52, 1, 0.20);
+    const body = add(new THREE.CylinderGeometry(0.175, 0.175, 0.52, 12), fenderMat, true, false);
+    body.position.copy(anchor);
+    for (const dy of [0.26, -0.26]) {
+      const cap = add(new THREE.SphereGeometry(0.175, 12, 8), fenderMat, true, false);
+      cap.scale.set(1, 0.62, 1);
+      cap.position.set(anchor.x, anchor.y + dy, anchor.z);
+    }
+    const cap = capPoint(t, 1, 0.02);
+    const lineTop = anchor.y + 0.4;
+    const lanyard = add(new THREE.CylinderGeometry(0.013, 0.013, Math.max(0.08, cap.y - lineTop), 5), ropeMat);
+    lanyard.position.set((anchor.x + cap.x) / 2, (cap.y + lineTop) / 2, (anchor.z + cap.z) / 2);
+    lanyard.rotation.x = -Math.atan2(anchor.z - cap.z, cap.y - lineTop);
+  }
+  // a mooring line coiled down on the foredeck
+  for (let k = 0; k < 3; k++) {
+    const coil = add(new THREE.TorusGeometry(0.20 + k * 0.075, 0.026, 6, 18), ropeMat, true, false);
+    coil.rotation.x = Math.PI / 2;
+    coil.position.set(8.35 - k * 0.012, deckEdgeY(tOf(8.35)) + 0.028 + k * 0.004, 1.05);
+  }
+
   // nav lights at the bow
   for (const [s, mat] of [[1, lampG], [-1, lampR]]) {
     const p = sidePoint(tOf(10.1), 0.985, s, 0.035);
@@ -1132,15 +1252,82 @@ function buildYacht(env, isSmall) {
   return { group, occluders, overlays, mats, texs };
 }
 
-/* ==================================================================== 7. framing */
 
-const FRAMES = {
-  whole: { pos: [35.5, 15.0, 29.8], target: [-0.3, 3.5, 0] },
-  hull: { pos: [-2.2, 4.4, 36.0], target: [0.4, 1.9, 0] },
-  deck: { pos: [-26.5, 14.5, 17.0], target: [-8.4, 2.1, 0] },
-  cabin: { pos: [-3.2, 5.4, 19.5], target: [-1.4, 3.0, 1.9] },
-  engine: { pos: [-24.5, 4.2, 14.5], target: [-8.7, 1.3, 1.6] },
-};
+/* ==================================================================== 7. the voyage path
+   Six stops around the yacht. A stop is a direction on a sphere around a look-at point plus
+   the world width the frame should span — so the same stop composes correctly on a laptop,
+   a portrait window and a phone (see `framing`). `p` is progress through the voyage, which
+   voyage.js maps onto page scroll; `card` is the side the info card takes at that stop, and
+   `panX` pushes the yacht off that side so the card never covers her. */
+
+const STOPS = [
+  // the hero: bow quarter, high and wide, yacht right of centre with the copy at lower left
+  { p: 0.00, zone: 'whole', theta: 0.876, phi: 1.318, look: [-0.4, 3.3, 0], fit: 42, panX: 0.10, panY: 0.15, card: 'right' },
+  // the same quarter, settling in — this is what the "Whole boat" chip scrolls to
+  { p: 0.11, zone: 'whole', theta: 0.815, phi: 1.296, look: [-0.6, 3.2, 0], fit: 34, panX: -0.14, panY: 0.14, card: 'right' },
+  // deck: high over the aft quarter, looking down into the cockpit
+  { p: 0.30, zone: 'deck', theta: -0.817, phi: 1.108, look: [-8.4, 2.1, 0], fit: 28, panX: 0.18, panY: 0.15, card: 'left' },
+  // cabin: level with the saloon glass, three-quarters on
+  { p: 0.48, zone: 'cabin', theta: -0.320, phi: 1.430, look: [-1.6, 3.0, 1.0], fit: 22, panX: -0.22, panY: 0.16, card: 'right' },
+  // engine: down at the waterline on the engine-room vents
+  { p: 0.65, zone: 'engine', theta: -0.885, phi: 1.505, look: [-8.7, 1.4, 1.2], fit: 22, panX: 0.21, panY: 0.17, card: 'left' },
+  // hull: beam-on, low, the whole sheer in one line
+  { p: 0.83, zone: 'hull', theta: -0.072, phi: 1.482, look: [0.2, 2.0, 0], fit: 36, panX: -0.14, panY: 0.13, card: 'right' },
+  // and out: back to the bow quarter, further off, to close the voyage
+  { p: 1.00, zone: 'whole', theta: 0.876, phi: 1.238, look: [-0.4, 3.4, 0], fit: 40, panX: -0.10, panY: 0.12, card: 'right' },
+];
+
+// one array per interpolated track, with theta unwrapped so the camera always takes the
+// short way round between stops
+const T_P = STOPS.map((s) => s.p);
+const T_TH = (() => {
+  const out = [STOPS[0].theta];
+  for (let i = 1; i < STOPS.length; i++) {
+    let d = STOPS[i].theta - STOPS[i - 1].theta;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    out.push(out[i - 1] + d);
+  }
+  return out;
+})();
+const T_PHI = STOPS.map((s) => s.phi);
+const T_FIT = STOPS.map((s) => s.fit);
+const T_LX = STOPS.map((s) => s.look[0]);
+const T_LY = STOPS.map((s) => s.look[1]);
+const T_LZ = STOPS.map((s) => s.look[2]);
+const T_PX = STOPS.map((s) => s.panX);
+const T_PY = STOPS.map((s) => s.panY);
+
+// Catmull-Rom through the stop values: continuous velocity across a stop, so a steady scroll
+// reads as one continuous move rather than a series of eases.
+function crSeg(a, i, u) {
+  const p0 = a[Math.max(0, i - 1)], p1 = a[i], p2 = a[i + 1], p3 = a[Math.min(a.length - 1, i + 2)];
+  return 0.5 * (2 * p1 + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (-p0 + 3 * p1 - 3 * p2 + p3) * u * u * u);
+}
+function segOf(p) {
+  let i = 0;
+  while (i < T_P.length - 2 && p > T_P[i + 1]) i++;
+  return i;
+}
+
+const DEG = Math.PI / 180;
+const FOV_BASE = 30, FOV_MAX = 56, R_MAX = 76;
+
+// Distance + lens that make `fit` metres span the frame width at this aspect. Portrait
+// windows widen the lens before they retreat, and accept a little crop, so the yacht stays
+// dominant instead of shrinking into the middle of the frame.
+function framing(fit, aspect) {
+  const w = fit * (0.60 + 0.40 * clamp(aspect / 1.5, 0, 1));
+  let fov = FOV_BASE;
+  let tanH = Math.tan(fov * DEG / 2) * aspect;
+  let r = (w / 2) / tanH;
+  if (r > R_MAX) {
+    fov = Math.min(FOV_MAX, 2 * Math.atan((w / 2) / R_MAX / aspect) / DEG);
+    tanH = Math.tan(fov * DEG / 2) * aspect;
+    r = (w / 2) / tanH;
+  }
+  return { r, fov, tanH };
+}
 
 const MARKERS = {
   hull: sidePoint(0.552, 0.55, 1, 0.34).toArray(),
@@ -1151,27 +1338,26 @@ const MARKERS = {
 
 /* ==================================================================== 8. init */
 
-export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui }) {
+export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui, onNavigate }) {   // eslint-disable-line no-unused-vars
   try {
     const test = document.createElement('canvas');
     if (!(test.getContext('webgl2') || test.getContext('webgl'))) return null;
   } catch (err) { return null; }
 
-  const isTouch = window.matchMedia('(pointer: coarse)').matches;
   const byZone = new Map(hotspots.map((h) => [h.zone, h]));
   let disposed = false;
 
-  // veil
+  // loader: the wordmark and a thin shimmering line, gone on the first rendered frame
   const veil = document.createElement('div');
   veil.className = 'boat-veil';
-  veil.innerHTML = '<span>Preparing your boat…</span>';
+  veil.innerHTML = '<span class="veil-brand"><span class="veil-a">a</span>Beam</span><span class="veil-line"></span>';
   stageEl.appendChild(veil);
 
   // renderer
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setClearColor(STAGE_BG, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.05;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1186,16 +1372,13 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(STAGE_BG);
-  scene.fog = new THREE.FogExp2(STAGE_BG, 0.0092);
+  scene.fog = new THREE.FogExp2(STAGE_BG, 0.0042);
 
-  const envMap = buildEnvironment(renderer);
-  scene.environment = envMap;
+  let envMap = null;
+  const camera = new THREE.PerspectiveCamera(FOV_BASE, 1, 0.4, 420);
 
-  const camera = new THREE.PerspectiveCamera(30, 1, 0.4, 420);
-  camera.position.set(...FRAMES.whole.pos);
-
-  /* ---- lights ---- */
-  const key = new THREE.DirectionalLight(0xffeed4, 2.5);
+  /* ---- lights: late golden hour, raking down the topsides ---- */
+  const key = new THREE.DirectionalLight(0xffdfa4, 3.1);
   key.position.copy(SUN).multiplyScalar(26);
   key.castShadow = true;
   key.shadow.mapSize.set(isSmall ? 1024 : 2048, isSmall ? 1024 : 2048);
@@ -1209,24 +1392,74 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   key.shadow.normalBias = 0.09;
   key.target.position.set(-1, 2.2, 0);
   scene.add(key, key.target);
-  scene.add(new THREE.HemisphereLight(0xbcd8f2, 0x0d2138, 0.6));
-  const fill = new THREE.DirectionalLight(0x9fc4e8, 0.6);
+  scene.add(new THREE.HemisphereLight(0xb4d2f0, 0x14283f, 0.55));
+  const fill = new THREE.DirectionalLight(0x9fc4e8, 0.5);
   fill.position.set(-18, 9, -13);
   scene.add(fill);
 
-  /* ---- water + contact shadow ---- */
+  /* ---- water ---- */
   const waterNormal = makeWaterNormal();
   const waterAlpha = canvasRadial(512, [[0, '#fff'], [0.4, '#fff'], [1, '#000']]);
   const waterMat = new THREE.MeshStandardMaterial({
-    color: 0x0d2140, roughness: 0.2, metalness: 0.0,
-    envMapIntensity: 0.7, normalMap: waterNormal,
+    color: 0x061324, roughness: 0.30, metalness: 0.0,
+    envMapIntensity: 0.42, normalMap: waterNormal,
     transparent: true, alphaMap: waterAlpha,
   });
-  waterMat.normalScale.set(0.15, 0.15);
+  waterMat.normalScale.set(0.13, 0.13);
+  // Reflections climb toward the horizon: a mirror flattens with distance, which is what
+  // carries the warm sky down onto the far water. Guarded — if the chunk ever changes name
+  // the water simply keeps its flat envMapIntensity.
+  waterMat.onBeforeCompile = (shader) => {
+    if (!shader.fragmentShader.includes('envMapIntensity;')) return;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vHz;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvHz = clamp(length(mvPosition.xyz) / 130.0, 0.0, 1.0);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vHz;')
+      .split('envMapIntensity;').join('envMapIntensity * (1.0 + 1.6 * pow(vHz, 2.2));')
+      // and the low sun's colour pools in the distance, the way it does across a bay at dusk
+      .replace('#include <dithering_fragment>',
+        '#include <dithering_fragment>\ngl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.52, 0.34, 0.22), 0.52 * pow(vHz, 2.2));');
+  };
   const water = new THREE.Mesh(new THREE.CircleGeometry(150, 84), waterMat);
   water.rotation.x = -Math.PI / 2;
   water.receiveShadow = true;
   scene.add(water);
+
+  // the warm glow the low sun lays along the horizon, brightest in its own bearing
+  const glowTex = (() => {
+    const S = 512, c = document.createElement('canvas');
+    c.width = S; c.height = 128;
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0, 128, 0, 0);
+    g.addColorStop(0, 'rgba(255,196,124,.95)');
+    g.addColorStop(0.35, 'rgba(255,164,92,.34)');
+    g.addColorStop(1, 'rgba(255,150,80,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, 128);
+    // fade away from the sun's bearing (painted at the middle of the tile)
+    const h = ctx.createLinearGradient(0, 0, S, 0);
+    h.addColorStop(0, 'rgba(0,0,0,.66)');
+    h.addColorStop(0.26, 'rgba(0,0,0,.44)');
+    h.addColorStop(0.5, 'rgba(0,0,0,0)');
+    h.addColorStop(0.74, 'rgba(0,0,0,.44)');
+    h.addColorStop(1, 'rgba(0,0,0,.66)');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = h;
+    ctx.fillRect(0, 0, S, 128);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  })();
+  const glowMat = new THREE.MeshBasicMaterial({
+    map: glowTex, transparent: true, opacity: 0.85, depthWrite: false, fog: false,
+    blending: THREE.AdditiveBlending, side: THREE.BackSide, toneMapped: false,
+  });
+  const horizonGlow = new THREE.Mesh(new THREE.CylinderGeometry(132, 132, 30, 48, 1, true), glowMat);
+  horizonGlow.position.y = 7;
+  horizonGlow.rotation.y = Math.atan2(SUN.x, SUN.z) - Math.PI;
+  horizonGlow.renderOrder = -1;
+  scene.add(horizonGlow);
 
   const shadowTex = canvasRadial(256, [[0, 'rgba(0,0,0,.55)'], [0.5, 'rgba(0,0,0,.24)'], [1, 'rgba(0,0,0,0)']]);
   const contact = new THREE.Mesh(
@@ -1237,70 +1470,139 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   contact.position.set(-1, 0.015, 0);
   scene.add(contact);
 
-  /* ---- yacht ---- */
-  const { group: boat, occluders, overlays, texs } = buildYacht(envMap, isSmall);
+  const sheenTex = canvasRadial(256, [[0, 'rgba(255,236,208,.5)'], [0.42, 'rgba(255,226,186,.16)'], [1, 'rgba(255,220,180,0)']]);
+  const sheen = new THREE.Mesh(
+    new THREE.PlaneGeometry(31, 13),
+    new THREE.MeshBasicMaterial({
+      map: sheenTex, transparent: true, opacity: 0.18, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false,
+    }),
+  );
+  sheen.rotation.x = -Math.PI / 2;
+  sheen.position.set(-1, 0.008, 0);
+  scene.add(sheen);
+
+  // ripple rings travelling out from the waterline, two of them out of phase
+  const ringTex = makeRingTexture();
+  const ripples = [0, 0.5].map((phase) => {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(34, 15),
+      new THREE.MeshBasicMaterial({
+        map: ringTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
+        blending: THREE.AdditiveBlending, color: 0x9ec8f0, toneMapped: false,
+      }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(-1, 0.03 + phase * 0.004, 0);
+    mesh.visible = !reducedMotion;
+    scene.add(mesh);
+    return { mesh, phase };
+  });
+
+  /* ---- yacht (built in stage 3, below) ---- */
+  let boat = null, occluders = [], overlays = {};
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
-  for (const t of texs) t.anisotropy = Math.min(4, maxAniso);
   waterNormal.anisotropy = Math.min(4, maxAniso);
-  scene.add(boat);
 
-  /* ---- controls ---- */
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(...FRAMES.whole.target);
-  controls.enablePan = false;
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
-  controls.rotateSpeed = 0.6;
-  controls.minDistance = 14;
-  controls.maxDistance = 86;
-  controls.minPolarAngle = 0.2;
-  controls.maxPolarAngle = Math.PI / 2 - 0.035;
-  controls.autoRotate = !reducedMotion;
-  controls.autoRotateSpeed = 0.28;
-  controls.enableZoom = false;
-  controls.enableRotate = !isTouch;
-  renderer.domElement.style.touchAction = 'pan-y';
-  controls.update();
+  /* ---- the path camera ----------------------------------------------------------------
+     pathP is the only camera state. Scroll sets it (voyage.js), a chip click tweens it when
+     there is no voyage running, and the free-look offset rides on top of it.             */
+  let pathP = 0;
+  let pathTween = null;
+  let narrow = false;
+  // loop state, declared up here because resize() and showZone() both wake the loop
+  let visible = true, pageVisible = document.visibilityState === 'visible';
+  let raf = 0, forceFrame = false, ready = false;
+  // under reduced motion nothing animates on its own, so the loop runs only for a short
+  // burst after something actually changes instead of spinning at 60fps forever
+  let wake = 0;
+  const nudge = () => { wake = 30; };
+  const look = { th: 0, ph: 0, vth: 0, vph: 0 };
+  const LOOK_TH = 0.30, LOOK_PH = 0.115;
+  const SPRING_K = 9.0, SPRING_C = 5.6;   // ~2s back to neutral, a touch of overshoot
 
-  /* ---- activation pill (scroll-hijack guard) ---- */
-  const pill = document.createElement('button');
-  pill.type = 'button';
-  pill.className = 'boat-activate';
-  pill.textContent = isTouch ? ui.activateTouch : ui.activateDesktop;
-  stageEl.appendChild(pill);
-  let active = false;
-  function setActive(on) {
-    active = on;
-    stageEl.classList.toggle('is-active', on);
-    controls.enableZoom = on;
-    if (isTouch) {
-      controls.enableRotate = on;
-      renderer.domElement.style.touchAction = on ? 'none' : 'pan-y';
-      pill.textContent = on ? ui.activateDone : ui.activateTouch;
-    } else {
-      pill.hidden = on;
+  const sph = new THREE.Spherical();
+  const lookAt = new THREE.Vector3();
+  const vDir = new THREE.Vector3(), vRight = new THREE.Vector3(), vUp = new THREE.Vector3();
+  const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+  function applyCamera() {
+    const p = clamp(pathP, 0, 1);
+    const i = segOf(p);
+    const span = T_P[i + 1] - T_P[i];
+    const u = span > 0 ? clamp((p - T_P[i]) / span, 0, 1) : 0;
+    const theta = crSeg(T_TH, i, u);
+    const phi = clamp(crSeg(T_PHI, i, u), 0.16, 1.535);
+    const fit = Math.max(8, crSeg(T_FIT, i, u));
+    let panX = crSeg(T_PX, i, u), panY = crSeg(T_PY, i, u);
+    // a phone docks the card at the bottom; a tall desktop window has room above and below
+    // her already, so she is pulled back toward the middle of the frame
+    if (narrow) { panX *= 0.18; panY += 0.11; }
+    else if (camera.aspect < 1.15) { panX *= 0.72; panY *= 0.45; }
+
+    const f = framing(fit, camera.aspect);
+    if (Math.abs(camera.fov - f.fov) > 0.02) { camera.fov = f.fov; camera.updateProjectionMatrix(); }
+
+    sph.set(f.r, clamp(phi + look.ph, 0.14, 1.545), theta + look.th);
+    lookAt.set(crSeg(T_LX, i, u), crSeg(T_LY, i, u), crSeg(T_LZ, i, u));
+    camera.position.setFromSpherical(sph).add(lookAt);
+
+    // pan in frame fractions: positive panX/panY move the yacht right / up on screen
+    vDir.copy(lookAt).sub(camera.position).normalize();
+    vRight.crossVectors(vDir, WORLD_UP).normalize();
+    vUp.crossVectors(vRight, vDir).normalize();
+    const frameW = 2 * f.r * f.tanH;
+    const dx = -panX * frameW, dy = -panY * (frameW / camera.aspect);
+    camera.position.addScaledVector(vRight, dx).addScaledVector(vUp, dy);
+    lookAt.addScaledVector(vRight, dx).addScaledVector(vUp, dy);
+    camera.lookAt(lookAt);
+  }
+
+  /* ---- free-look: a drag adds an orbital offset that eases back to neutral ---- */
+  let dragId = null, lastX = 0, lastY = 0;
+  const canvas = renderer.domElement;
+  function onPointerDown(ev) {
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    dragId = ev.pointerId;
+    lastX = ev.clientX; lastY = ev.clientY;
+    look.vth = 0; look.vph = 0;
+    stageEl.classList.add('is-dragging');
+    try { canvas.setPointerCapture(ev.pointerId); } catch (err) { /* not fatal */ }
+    nudge();
+    loop();
+  }
+  function onPointerMove(ev) {
+    if (dragId !== ev.pointerId) return;
+    const mx = ev.clientX - lastX, my = ev.clientY - lastY;
+    lastX = ev.clientX; lastY = ev.clientY;
+    look.th = clamp(look.th - mx * 0.0032, -LOOK_TH, LOOK_TH);
+    look.ph = clamp(look.ph - my * 0.0020, -LOOK_PH, LOOK_PH);
+    look.vth = -mx * 0.020;
+    look.vph = -my * 0.012;
+    nudge();
+    if (reducedMotion) loop();
+  }
+  function onPointerUp(ev) {
+    if (dragId !== ev.pointerId) return;
+    dragId = null;
+    stageEl.classList.remove('is-dragging');
+    if (reducedMotion) { look.th = 0; look.ph = 0; look.vth = 0; look.vph = 0; }
+  }
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('lostpointercapture', onPointerUp);
+
+  function springLook(dt) {
+    if (dragId !== null || reducedMotion) return;
+    for (const [d, v] of [['th', 'vth'], ['ph', 'vph']]) {
+      const a = -SPRING_K * look[d] - SPRING_C * look[v];
+      look[v] += a * dt;
+      look[d] += look[v] * dt;
+      if (Math.abs(look[d]) < 0.0004 && Math.abs(look[v]) < 0.0015) { look[d] = 0; look[v] = 0; }
     }
   }
-  const onPill = (ev) => { ev.stopPropagation(); setActive(!active); };
-  pill.addEventListener('click', onPill);
-  const onCanvasDown = () => { if (!active) setActive(true); };
-  const onStageLeave = () => { if (active) setActive(false); };
-  if (!isTouch) {
-    renderer.domElement.addEventListener('pointerdown', onCanvasDown);
-    stageEl.addEventListener('mouseleave', onStageLeave);
-  }
-
-  /* ---- idle auto-rotate ---- */
-  let idleTimer = null;
-  function pauseAutoRotate() {
-    controls.autoRotate = false;
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => { if (!reducedMotion && !flying) controls.autoRotate = true; }, 6000);
-  }
-  const onCtrlStart = () => { pauseAutoRotate(); stageEl.classList.add('is-dragging'); };
-  const onCtrlEnd = () => { stageEl.classList.remove('is-dragging'); };
-  controls.addEventListener('start', onCtrlStart);
-  controls.addEventListener('end', onCtrlEnd);
 
   /* ---- zone highlighting ---- */
   function setHover(zone, on) {
@@ -1310,7 +1612,8 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
 
   /* ---- hotspot markers ---- */
   const markers = new Map();
-  Object.entries(MARKERS).forEach(([zone, p]) => {
+  function buildMarkers() {
+    Object.entries(MARKERS).forEach(([zone, pos]) => {
     const h = byZone.get(zone);
     if (!h) return;
     const btn = document.createElement('button');
@@ -1319,22 +1622,23 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     btn.dataset.zone = zone;
     btn.setAttribute('aria-label', `${h.label}: ${h.service}`);
     btn.innerHTML = `<span class="hotspot-dot" aria-hidden="true"></span><span class="hotspot-tip" role="tooltip">${h.tooltip}</span>`;
-    btn.addEventListener('click', (ev) => { ev.stopPropagation(); selectZone(zone); });
+    btn.addEventListener('click', (ev) => { ev.stopPropagation(); go(zone); });
     btn.addEventListener('focus', () => { btn.classList.add('is-focused'); setHover(zone, true); });
     btn.addEventListener('blur', () => { btn.classList.remove('is-focused'); setHover(zone, false); });
     btn.addEventListener('mouseenter', () => setHover(zone, true));
     btn.addEventListener('mouseleave', () => setHover(zone, false));
-    const obj = new CSS2DObject(btn);
-    obj.position.set(p[0], p[1], p[2]);
-    boat.add(obj);
-    markers.set(zone, { btn, obj, world: new THREE.Vector3() });
-  });
+      const obj = new CSS2DObject(btn);
+      obj.position.set(pos[0], pos[1], pos[2]);
+      boat.add(obj);
+      markers.set(zone, { btn, obj, world: new THREE.Vector3() });
+    });
+  }
 
   /* ---- chips ---- */
   const chips = Array.from(chipsEl.querySelectorAll('[data-zone]'));
   const chipHandlers = [];
   chips.forEach((c) => {
-    const onClick = () => selectZone(c.dataset.zone);
+    const onClick = () => go(c.dataset.zone);
     const onEnter = () => setHover(c.dataset.zone, true);
     const onLeave = () => setHover(c.dataset.zone, false);
     c.addEventListener('click', onClick);
@@ -1343,63 +1647,87 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     chipHandlers.push([c, onClick, onEnter, onLeave]);
   });
 
-  /* ---- fly-to ---- */
-  let flying = null;
-  const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
-  function flyTo(zone) {
-    const f = FRAMES[zone] || FRAMES.whole;
-    const fromPos = camera.position.clone(), fromT = controls.target.clone();
-    const toPos = new THREE.Vector3(...f.pos), toT = new THREE.Vector3(...f.target);
-    // no animation when the loop is gated (hidden tab / stage off-screen) — snap, so the
-    // next frame the stage draws is already framed on the new zone
-    if (reducedMotion || !visible || !pageVisible) {
-      camera.position.copy(toPos); controls.target.copy(toT); controls.update();
-      flying = null; controls.enabled = true;
-      return;
-    }
-    flying = { t0: performance.now(), dur: 760, fromPos, fromT, toPos, toT };
-    controls.autoRotate = false;
-    controls.enabled = false;
+  // Navigation is scroll: the page owns it, so a chip or a marker asks the voyage to scroll
+  // and the camera follows from there. Without a voyage (no scroll region) we tween instead.
+  function go(zone) {
+    if (onNavigate && onNavigate(zone) !== false) return;
+    selectZone(zone);
   }
 
-  function selectZone(zone) {
+  /* ---- content: the panel, the pressed chip, the marker and the zone tint ---- */
+  const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  let currentZone = null, pendingZone = null;
+
+  function showZone(zone) {
     const h = byZone.get(zone);
     if (!h) return;
-    panelEl.querySelector('.panel-eyebrow').textContent = h.eyebrow;
-    panelEl.querySelector('.panel-title').textContent = h.title;
-    panelEl.querySelector('.panel-body').textContent = h.body;
-    const cta = panelEl.querySelector('.panel-cta');
-    cta.textContent = h.cta.label;
-    cta.href = h.cta.href;
+    if (zone !== currentZone) {
+      panelEl.querySelector('.panel-eyebrow').textContent = h.eyebrow;
+      panelEl.querySelector('.panel-title').textContent = h.title;
+      panelEl.querySelector('.panel-body').textContent = h.body;
+      const cta = panelEl.querySelector('.panel-cta');
+      cta.textContent = h.cta.label;
+      cta.href = h.cta.href;
+      panelEl.dataset.zone = zone;
+      currentZone = zone;
+    }
     chips.forEach((c) => c.setAttribute('aria-pressed', c.dataset.zone === zone ? 'true' : 'false'));
+    if (!boat) pendingZone = zone;   // the zone tint and the marker arrive with the yacht
     markers.forEach((m, z) => m.btn.classList.toggle('is-selected', z === zone));
     Object.entries(overlays).forEach(([z, o]) => {
       o.selected = z === zone;
-      if (z === zone) o.flash = 0.18;
+      if (z === zone && o.flash === 0) o.flash = 0.16;
     });
-    flyTo(zone);
-    pauseAutoRotate();
-    forceFrame = true;   // chips live below the stage; redraw even if the loop is gated
-    loop();
+    forceFrame = true;   // the stage may be gated (hidden tab): draw the new framing anyway
+    nudge();
+    if (ready) loop();
+  }
+
+  function stopFor(zone) {
+    return STOPS.find((s) => s.zone === zone && s.p > 0.05) || STOPS[0];
+  }
+
+  // used when no voyage is driving the camera (e.g. the module failed to load)
+  function selectZone(zone) {
+    if (!byZone.has(zone)) return;
+    showZone(zone);
+    const to = stopFor(zone).p;
+    if (reducedMotion || !visible || !pageVisible) { pathP = to; pathTween = null; return; }
+    pathTween = { t0: performance.now(), dur: 900, from: pathP, to };
+  }
+
+  function setVoyageProgress(p) {
+    pathP = clamp(p, 0, 1);
+    pathTween = null;
+    nudge();
+    if (reducedMotion && ready) loop();
   }
 
   /* ---- sizing ---- */
   let W = 1, H = 1;
+  // the priming frame is drawn at DPR 1 and the real ratio comes in on the frame after: it is
+  // hidden behind the loader, and it takes three quarters of the pixels out of the first paint
+  let dprPrime = true;
   function resize() {
+    if (disposed) return;
     W = Math.max(1, stageEl.clientWidth);
     H = Math.max(1, stageEl.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, W < 768 ? 1.5 : 2));
+    narrow = W < 900;
+    renderer.setPixelRatio(dprPrime ? 1 : Math.min(window.devicePixelRatio || 1, W < 768 ? 1.5 : 2));
     renderer.setSize(W, H, false);
     labelRenderer.setSize(W, H);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
+    forceFrame = true;
+    nudge();
+    if (ready) loop();
   }
   const ro = new ResizeObserver(resize);
   ro.observe(stageEl);
   resize();
+  applyCamera();
 
   /* ---- visibility gating ---- */
-  let visible = true, pageVisible = document.visibilityState === 'visible', raf = 0, forceFrame = false;
   const io = new IntersectionObserver((entries) => { visible = entries[0].isIntersecting; if (visible) loop(); }, { rootMargin: '120px' });
   io.observe(stageEl);
   const onVis = () => { pageVisible = document.visibilityState === 'visible'; if (pageVisible) loop(); };
@@ -1416,29 +1744,36 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     raf = 0;
     // Gated when the stage is off-screen or the tab is hidden — but the very first
     // frame always runs: it is what removes the veil and lets CSS2DRenderer mount the
-    // markers. A page opened in a background tab would otherwise sit on "Preparing
-    // your boat…" with no markers until it was focused.
+    // markers. A page opened in a background tab would otherwise sit on the loader
+    // with no markers until it was focused.
     const gated = !visible || !pageVisible;
+    const dt = Math.min(clock.getDelta(), 1 / 20);
     if (gated && !firstFrame && !forceFrame) return;
     forceFrame = false;
     const t = clock.getElapsedTime();
     frame++;
 
-    if (flying) {
-      const k = Math.min(1, (performance.now() - flying.t0) / flying.dur);
-      const e = easeInOut(k);
-      camera.position.lerpVectors(flying.fromPos, flying.toPos, e);
-      controls.target.lerpVectors(flying.fromT, flying.toT, e);
-      if (k >= 1) { flying = null; controls.enabled = true; }
+    if (pathTween) {
+      const k = Math.min(1, (performance.now() - pathTween.t0) / pathTween.dur);
+      pathP = pathTween.from + (pathTween.to - pathTween.from) * easeInOut(k);
+      if (k >= 1) pathTween = null;
     }
-    if (!reducedMotion) {
+    if (boat && !reducedMotion) {
       boat.position.y = Math.sin(t * 0.55) * 0.035;
       boat.rotation.z = Math.sin(t * 0.43) * 0.0045;
       boat.rotation.x = Math.sin(t * 0.33) * 0.0026;
+    }
+    if (!reducedMotion) {
       waterNormal.offset.x = t * 0.0075;
       waterNormal.offset.y = t * 0.0042;
+      for (const r of ripples) {
+        const k = (t * 0.17 + r.phase) % 1;
+        r.mesh.scale.setScalar(0.97 + k * 0.30);
+        r.mesh.material.opacity = 0.30 * Math.sin(k * Math.PI) ** 1.6;
+      }
     }
-    controls.update();
+    springLook(dt);
+    applyCamera();
 
     // zone highlight easing
     for (const o of Object.values(overlays)) {
@@ -1470,33 +1805,88 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     labelRenderer.render(scene, camera);
     if (firstFrame) {
       firstFrame = false;
+      if (dprPrime) { dprPrime = false; window.setTimeout(resize, 0); }
       veil.classList.add('is-gone');
-      window.setTimeout(() => veil.remove(), 600);
+      veilTimer = window.setTimeout(() => veil.remove(), 600);
+      // the sun and the yacht are both fixed: one shadow pass is enough, and dropping the
+      // per-frame pass is most of the frame budget back on a phone
+      renderer.shadowMap.autoUpdate = false;
     }
     if (gated) return;   // that was the priming frame; wait to be woken again
+    if (reducedMotion && !pathTween) {
+      if (wake <= 0) return;   // settle and stop until something changes
+      wake--;
+    }
     raf = requestAnimationFrame(loop);
   }
-  loop();
+  /* ---- staged build -------------------------------------------------------------------
+     One synchronous init was a ~5s long task: the PMREM bake, the yacht, and above all the
+     first render (every shader program linked at once). It is split into three short tasks
+     with a yield between them, and the programs are linked off-thread where the browser
+     supports it. A hidden tab never gets a rAF, so the steps are scheduled on timers and
+     the compile is raced against one — the priming frame still runs in a background tab. */
+  let stageTimer = 0, veilTimer = 0;
+  const nextStep = (fn) => {
+    if (disposed) return;
+    if (document.visibilityState === 'hidden') { stageTimer = window.setTimeout(fn, 0); return; }
+    requestAnimationFrame(() => { stageTimer = window.setTimeout(fn, 0); });
+  };
+
+  function stageEnv() {
+    if (disposed) return;
+    envMap = buildEnvironment(renderer);
+    scene.environment = envMap;
+    nextStep(stageYacht);
+  }
+
+  function stageYacht() {
+    if (disposed) return;
+    const built = buildYacht(envMap, isSmall);
+    boat = built.group;
+    occluders = built.occluders;
+    overlays = built.overlays;
+    for (const t of built.texs) t.anisotropy = Math.min(4, maxAniso);
+    scene.add(boat);
+    buildMarkers();
+    if (pendingZone) { const z = pendingZone; pendingZone = null; showZone(z); }
+    nextStep(stageFirstFrame);
+  }
+
+  function stageFirstFrame() {
+    if (disposed) return;
+    ready = true;
+    const start = () => { if (!disposed) loop(); };
+    if (document.visibilityState === 'hidden' || typeof renderer.compileAsync !== 'function') {
+      start();
+      return;
+    }
+    let done = false;
+    const once = () => { if (!done) { done = true; start(); } };
+    stageTimer = window.setTimeout(once, 1500);
+    renderer.compileAsync(scene, camera).then(once, once);
+  }
+
+  nextStep(stageEnv);
 
   /* ---- teardown ---- */
   function destroy() {
     disposed = true;
     if (raf) cancelAnimationFrame(raf);
-    if (idleTimer) clearTimeout(idleTimer);
+    if (stageTimer) clearTimeout(stageTimer);
+    if (veilTimer) clearTimeout(veilTimer);
     ro.disconnect();
     io.disconnect();
     document.removeEventListener('visibilitychange', onVis);
-    controls.removeEventListener('start', onCtrlStart);
-    controls.removeEventListener('end', onCtrlEnd);
-    pill.removeEventListener('click', onPill);
-    renderer.domElement.removeEventListener('pointerdown', onCanvasDown);
-    stageEl.removeEventListener('mouseleave', onStageLeave);
+    canvas.removeEventListener('pointerdown', onPointerDown);
+    canvas.removeEventListener('pointermove', onPointerMove);
+    canvas.removeEventListener('pointerup', onPointerUp);
+    canvas.removeEventListener('pointercancel', onPointerUp);
+    canvas.removeEventListener('lostpointercapture', onPointerUp);
     chipHandlers.forEach(([c, a, b, d]) => {
       c.removeEventListener('click', a);
       c.removeEventListener('mouseenter', b);
       c.removeEventListener('mouseleave', d);
     });
-    controls.dispose();
 
     const seenGeo = new Set(), seenMat = new Set(), seenTex = new Set();
     scene.traverse((o) => {
@@ -1512,11 +1902,19 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
         m.dispose();
       }
     });
-    envMap.dispose();
+    if (envMap) envMap.dispose();
     scene.environment = null;
     renderer.dispose();
     stageEl.innerHTML = '';
   }
 
-  return { selectZone, destroy };
+  return {
+    stops: STOPS.map((s) => ({ p: s.p, zone: s.zone, card: s.card })),
+    showZone,
+    selectZone,
+    setVoyageProgress,
+    stopFor: (zone) => stopFor(zone).p,
+    info: () => ({ triangles: renderer.info.render.triangles, calls: renderer.info.render.calls }),
+    destroy,
+  };
 }

@@ -1,30 +1,35 @@
 /* aBeam — boat.css · internals of the 3D stage (boat.js) */
 
+/* touch-action: pan-y — one finger always scrolls the page (which is what moves the camera);
+   a horizontal drag never scrolls, so it can feed the free-look offset instead. */
 .boat-stage canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; outline: none; cursor: grab; }
-.boat-stage.is-active canvas { touch-action: none; }
 .boat-stage.is-dragging canvas { cursor: grabbing; }
 
 .boat-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .boat-labels > div { pointer-events: none; }
 
+/* the loader: a wordmark and a thin shimmering line, gone on the first rendered frame */
 .boat-veil {
-  position: absolute; inset: 0; z-index: 2; display: grid; place-items: center;
-  background: radial-gradient(60% 50% at 50% 60%, rgba(31,78,133,.45), transparent 70%), var(--stage-bg);
-  color: var(--stage-muted); font-size: .78rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 14px;
+  background: radial-gradient(60% 50% at 50% 60%, rgba(31,78,133,.42), transparent 70%), var(--stage-bg);
   transition: opacity .55s var(--ease);
 }
 .boat-veil.is-gone { opacity: 0; pointer-events: none; }
-
-.boat-activate {
-  position: absolute; right: 14px; bottom: 14px; z-index: 3;
-  min-height: 36px; padding: 0 14px; border-radius: var(--radius-pill);
-  border: 1px solid var(--stage-line); background: rgba(11,31,58,.72); color: var(--stage-fg);
-  font-size: .78rem; font-weight: 600; letter-spacing: .04em; cursor: pointer;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  transition: background var(--dur) var(--ease), opacity var(--dur) var(--ease);
+.veil-brand {
+  font-family: var(--font-body); font-weight: 700; font-size: 1.35rem; letter-spacing: .24em;
+  font-variation-settings: "wdth" 112; color: var(--stage-fg); text-indent: .24em;
 }
-.boat-activate:hover { background: rgba(31,78,133,.8); }
-.boat-stage.is-active .boat-activate { background: var(--teak); border-color: var(--teak); }
+.veil-a { color: var(--teak); }
+.veil-line {
+  width: 128px; height: 1px; border-radius: 1px; background: rgba(255,255,255,.14);
+  background-image: linear-gradient(90deg, transparent, var(--teak-pale), transparent);
+  background-size: 45% 100%; background-repeat: no-repeat;
+  animation: veil-shimmer 1.7s var(--ease) infinite;
+}
+@keyframes veil-shimmer { 0% { background-position: -50% 0; } 100% { background-position: 150% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .veil-line { animation: none; background-position: 50% 0; }
+}
 
 /* markers */
 .hotspot {
@@ -42,6 +47,22 @@
   box-shadow: 0 0 0 1.5px #fff, 0 0 0 6px rgba(255,255,255,.16), 0 1px 5px rgba(0,0,0,.45);
 }
 .hotspot:focus-visible { outline: none; }
+.hotspot:focus-visible .hotspot-dot { box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--teak), 0 1px 6px rgba(0,0,0,.5); }
+/* a gentle, slow pulse so the markers read as live without ever drawing the eye off the boat */
+.hotspot-dot::after {
+  content: ""; position: absolute; inset: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%; border: 1px solid var(--teak-pale); opacity: 0; pointer-events: none;
+  animation: hotspot-pulse 3.6s cubic-bezier(.2,.6,.3,1) infinite;
+}
+.hotspot.is-behind .hotspot-dot::after { animation-play-state: paused; opacity: 0; }
+@keyframes hotspot-pulse {
+  0% { transform: scale(1); opacity: 0; }
+  18% { opacity: .5; }
+  70%, 100% { transform: scale(3.1); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hotspot-dot::after { animation: none; display: none; }
+}
 .hotspot.is-behind { opacity: .3; }
 
 .hotspot-tip {

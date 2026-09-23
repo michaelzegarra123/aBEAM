@@ -158,6 +158,9 @@ export const STATUS_LABELS = { serving:'Currently serving', soon:'Coming soon' }
 
 ## 5. Module interfaces
 
+> **2026-09-22 redesign note:** the hero and showcase merged into a full-viewport, scroll-driven "voyage" (see voyage.js). boat.js no longer uses OrbitControls or the activation pill; the camera follows a scroll-progress spline through the zone stops with a damped free-look drag offset, and initBoat returns {stops, showZone, selectZone, setVoyageProgress, stopFor, info, destroy}. Section 5 below describes the pre-redesign module and is retained for history.
+
+
 ### boat.js — `export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion })`
 - Creates inside `stageEl`: `<canvas>` (WebGL), a CSS2DRenderer label layer (`.boat-labels`), an activation pill (`button.boat-activate`), a loading veil (`.boat-veil`) removed after the first rendered frame.
 - Returns `{ selectZone(zone), destroy() }`.

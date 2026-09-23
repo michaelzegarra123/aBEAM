@@ -142,6 +142,8 @@ export const COPY_UI = {
   formSuccess: 'Got it. We’ll text you back with what we can do, by when, and the fee. If anything needs a decision, we’ll ask before we act.',
   formComposing: 'Opening your messages with the details filled in. Just hit send.',
   formErrorRequired: 'We’ll need this to get started.',
+  // read out by the form's live region when a submit is blocked; the field names follow it
+  formErrorSummary: 'Please check the highlighted fields:',
   formCopy: 'Copy message',
   formCopied: 'Copied',
   formFallbackIntro: 'If your messages app didn’t open, copy this and text it to us:',

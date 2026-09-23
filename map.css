@@ -2,50 +2,172 @@
 
 .chart-overlay { position: absolute; inset: 0; pointer-events: none; }
 
+/* A mounted-chart-print frame: a hairline mat, a faint edge vignette and a
+   whisper of depth at the bottom. Decorative only, never hit-tested. */
+.chart-vignette {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(118% 96% at 50% 38%,
+      transparent 52%,
+      color-mix(in srgb, var(--chart-ink) 6%, transparent) 82%,
+      color-mix(in srgb, var(--chart-ink) 13%, transparent) 100%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--chart-line) 62%, transparent),
+    inset 0 0 0 5px color-mix(in srgb, var(--chart-water) 55%, transparent),
+    inset 0 0 0 6px color-mix(in srgb, var(--chart-line) 34%, transparent),
+    inset 0 26px 44px -30px color-mix(in srgb, var(--chart-ink) 26%, transparent),
+    inset 0 -26px 48px -30px color-mix(in srgb, var(--chart-ink) 30%, transparent);
+}
+
+/* ---------- pins ---------- */
+
 .pin {
+  --pin-color: var(--status-soon);
   position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; padding: 0;
   border: 0; background: transparent; cursor: pointer; pointer-events: auto;
   display: grid; place-items: center;
 }
+.pin.is-serving { --pin-color: var(--status-serving); }
+
 .pin-dot {
-  grid-area: 1 / 1; width: 18px; height: 18px; border-radius: 50%;
-  background: #fff; border: 3px solid var(--status-soon);
-  box-shadow: 0 2px 6px rgba(11,31,58,.25), 0 0 0 4px rgba(255,255,255,.55);
-  transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  grid-area: 1 / 1; display: grid; place-items: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--pin-color);
+  box-shadow:
+    0 0 0 3.5px color-mix(in srgb, var(--chart-water) 62%, transparent),
+    0 1px 2px rgba(11,31,58,.18),
+    0 6px 14px -4px rgba(11,31,58,.32);
+  transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.pin.is-serving .pin-dot { border-color: var(--status-serving); }
-.pin-pulse { grid-area: 1 / 1; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--status-serving); opacity: 0; }
-.pin.is-serving .pin-pulse { animation: pin-pulse 2.4s ease-out infinite; }
-@keyframes pin-pulse { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(3); opacity: 0; } }
-.pin:hover .pin-dot, .pin:focus-visible .pin-dot, .pin.is-open .pin-dot { transform: scale(1.18); }
+/* the inner core — ring + dot, crisp at any size */
+.pin-dot::after {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--pin-color);
+  transition: transform var(--dur) var(--ease);
+}
+
+/* breathing halo — present on every pin, deliberately barely there */
+.pin-pulse {
+  grid-area: 1 / 1; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--pin-color); opacity: 0;
+  animation: pin-halo 3.4s var(--ease) infinite;
+  animation-delay: calc(var(--pin-i, 0) * .55s);
+}
+@keyframes pin-halo {
+  0%   { transform: scale(1);   opacity: 0; }
+  24%  { opacity: .1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+.pin:hover .pin-dot, .pin:focus-visible .pin-dot { transform: scale(1.12); }
+.pin.is-open .pin-dot { transform: scale(1.2); }
 .pin:focus-visible { outline: none; }
-.pin:focus-visible .pin-dot { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--accent); }
-.pin-label {
-  position: absolute; top: calc(100% - 6px); left: 50%; transform: translateX(-50%);
-  padding: 3px 8px; border-radius: var(--radius-pill); white-space: nowrap;
-  font-size: .72rem; font-weight: 600; letter-spacing: .04em; color: var(--chart-ink);
-  background: color-mix(in srgb, var(--chart-land) 85%, #fff); border: 1px solid var(--chart-line);
-  opacity: 0; transition: opacity var(--dur) var(--ease);
+
+/* active pin: a fine accent ring, kept legible over both chart themes */
+.pin.is-open .pin-dot {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--chart-water) 78%, transparent),
+    0 0 0 3.5px color-mix(in srgb, var(--accent) 72%, transparent),
+    0 1px 2px rgba(11,31,58,.18),
+    0 8px 18px -5px rgba(11,31,58,.34);
 }
-@media (min-width: 900px) { .pin-label { opacity: 1; } }
-.pin:hover .pin-label, .pin:focus-visible .pin-label, .pin.is-open .pin-label { opacity: 1; }
+.pin:focus-visible .pin-dot {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 4px var(--accent),
+    0 1px 2px rgba(11,31,58,.18),
+    0 8px 18px -5px rgba(11,31,58,.34);
+}
+
+/* ---------- pin labels ---------- */
+
+.pin-label {
+  position: absolute; top: calc(100% - 4px); left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: 3px 9px; border-radius: var(--radius-pill); white-space: nowrap;
+  font-size: .68rem; font-weight: 600; line-height: 1.35;
+  font-variant-caps: all-small-caps; letter-spacing: .1em;
+  color: var(--chart-ink);
+  background: color-mix(in srgb, var(--chart-land) 68%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chart-line) 70%, transparent);
+  box-shadow: 0 1px 2px rgba(11,31,58,.1), 0 6px 14px -8px rgba(11,31,58,.3);
+  backdrop-filter: blur(7px) saturate(1.3);
+  -webkit-backdrop-filter: blur(7px) saturate(1.3);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+@media (min-width: 900px) { .pin-label { opacity: 1; transform: translateX(-50%) translateY(0); } }
+.pin:hover .pin-label, .pin:focus-visible .pin-label, .pin.is-open .pin-label {
+  opacity: 1; transform: translateX(-50%) translateY(0);
+}
+.pin.is-open .pin-label {
+  color: var(--accent-deep);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ---------- popup ---------- */
 
 .chart-popup {
-  position: absolute; z-index: 5; width: 280px; max-width: calc(100% - 16px);
-  display: grid; gap: 6px; padding: 16px 18px 16px;
-  background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: var(--shadow-2); pointer-events: auto; font-size: .95rem; line-height: 1.45;
+  position: absolute; z-index: 5; width: 284px; max-width: calc(100% - 16px);
+  display: grid; gap: 5px; padding: 16px 18px 17px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--shadow-2),
+    inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+  pointer-events: auto; font-size: .95rem; line-height: 1.45;
 }
 .chart-popup[hidden] { display: none; }
-.popup-close { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border: 0; border-radius: 50%; background: transparent; color: var(--fg-soft); font-size: 1.3rem; line-height: 1; cursor: pointer; }
-.popup-close:hover { background: var(--surface-alt); }
-.popup-name { font-weight: 600; font-size: 1.05rem; padding-right: 28px; }
-.popup-sub { color: var(--fg-soft); font-size: .875rem; }
-.popup-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
-.popup-berths { font-size: .875rem; color: var(--fg-soft); font-variant-numeric: tabular-nums; }
-.popup-cta { justify-self: start; margin-top: 4px; }
+/* springless reveal — restarts each time the card is shown */
+.chart-popup:not([hidden]) { animation: popup-in .2s var(--ease) both; }
+@keyframes popup-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* flipped below its pin: emerge downward from the anchor instead */
+.chart-popup.is-flip-y:not([hidden]) { animation-name: popup-in-down; }
+@keyframes popup-in-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-/* phone: the popup docks under the chart as a full-width card */
+/* 44×44 hit area; the visible disc and glyph stay small inside it
+   (background-clip: content-box paints only the 30×30 content box). */
+.popup-close {
+  position: absolute; top: 2px; right: 2px; width: 44px; height: 44px; padding: 7px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%; background-color: transparent; background-clip: content-box;
+  color: var(--fg-soft); font-size: 1.15rem; line-height: 1; cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.popup-close:hover { background-color: color-mix(in srgb, var(--surface-alt) 80%, transparent); color: var(--fg); }
+.chart-popup:focus { outline: none; }
+.chart-popup:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.popup-name {
+  font-family: var(--font-display); font-weight: 500; font-size: 1.14rem;
+  line-height: 1.24; letter-spacing: -.005em; padding-right: 26px;
+}
+.popup-sub { color: var(--fg-soft); font-size: .8125rem; line-height: 1.45; margin-top: 1px; }
+.popup-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.popup-berths { font-size: .8125rem; color: var(--fg-soft); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.popup-cta { justify-self: start; margin-top: 7px; font-size: .875rem; }
+
+/* phone: the popup docks under the chart as a full-width glass card */
 .chart-popup-dock:empty { display: none; }
-.chart-popup-dock { margin-top: 12px; }
-.chart-popup.is-docked { position: static; width: 100%; max-width: none; }
+.chart-popup-dock { margin-top: 14px; }
+.chart-popup.is-docked {
+  position: static; width: 100%; max-width: none;
+  padding: 17px 19px 18px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-pulse { animation: none; opacity: 0; }
+  .chart-popup:not([hidden]) { animation: none; }
+}

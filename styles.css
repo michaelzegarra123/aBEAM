@@ -18,8 +18,11 @@
   --stage-bg: var(--navy-900); --stage-bg-deep: var(--navy-950); --stage-fg: #F2F6FA; --stage-muted: #A9BBD1; --stage-line: rgba(255,255,255,.14);
   --chart-water: var(--sea-200); --chart-water-deep: var(--sea-300); --chart-land: var(--sand); --chart-line: var(--sand-deep); --chart-ink: var(--ink-soft);
   --status-serving: var(--kelp); --status-serving-soft: var(--kelp-soft); --status-soon: var(--teak); --status-soon-soft: var(--teak-ghost);
+  --status-serving-ink: #1C6647; --status-soon-ink: #8A5629;
   --marina-ground: var(--sea-100);
   --on-accent: #FFFFFF;
+  --accent-ink: #8A5629;      /* small text on tinted grounds: one step darker than --accent-deep */
+  --danger: #B84A3A;
   /* type */
   --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
@@ -39,8 +42,11 @@
     --accent: #D4A06A; --accent-deep: #EBD3B3; --accent-soft: rgba(212,160,106,.14);
     --chart-water: #10294B; --chart-water-deep: #0B1F3A; --chart-land: #2A2E36; --chart-line: #4A5261; --chart-ink: #C7D2DF;
     --status-serving: #4CC391; --status-serving-soft: rgba(76,195,145,.16); --status-soon: #D4A06A; --status-soon-soft: rgba(212,160,106,.16);
+    --status-serving-ink: #4CC391; --status-soon-ink: #D4A06A;
     --marina-ground: #0C1B30;
     --on-accent: #0B1F3A;
+    --accent-ink: #EBD3B3;
+    --danger: #F08E7E;
     --shadow-1: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.3); --shadow-2: 0 12px 40px rgba(0,0,0,.5);
     color-scheme: dark;
   }
@@ -51,8 +57,11 @@
   --accent: #D4A06A; --accent-deep: #EBD3B3; --accent-soft: rgba(212,160,106,.14);
   --chart-water: #10294B; --chart-water-deep: #0B1F3A; --chart-land: #2A2E36; --chart-line: #4A5261; --chart-ink: #C7D2DF;
   --status-serving: #4CC391; --status-serving-soft: rgba(76,195,145,.16); --status-soon: #D4A06A; --status-soon-soft: rgba(212,160,106,.16);
+  --status-serving-ink: #4CC391; --status-soon-ink: #D4A06A;
   --marina-ground: #0C1B30;
   --on-accent: #0B1F3A;
+  --accent-ink: #EBD3B3;
+  --danger: #F08E7E;
   --shadow-1: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.3); --shadow-2: 0 12px 40px rgba(0,0,0,.5);
   color-scheme: dark;
 }
@@ -69,8 +78,9 @@ body {
   line-height: 1.6;
   font-variation-settings: "wdth" 100;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
+@supports not (overflow: clip) { body { overflow-x: hidden; } }
 [hidden] { display: none !important; }
 img, svg { max-width: 100%; }
 a { color: inherit; text-decoration: none; }
@@ -79,21 +89,28 @@ h1, h2, h3, h4 { margin: 0; font-weight: 500; }
 ul, ol { margin: 0; padding: 0; list-style: none; }
 button { font: inherit; color: inherit; }
 address { font-style: normal; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
-.container { width: 100%; max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); }
+:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 3px; border-radius: 2px; }
+.container {
+  width: 100%; max-width: var(--container); margin-inline: auto;
+  padding-inline: max(var(--gutter), env(safe-area-inset-left, 0px)) max(var(--gutter), env(safe-area-inset-right, 0px));
+}
 
 /* type scale */
 h1 { font-family: var(--font-display); font-size: clamp(2.4rem, 6.2vw, 4.4rem); line-height: 1.02; letter-spacing: -.015em; font-variation-settings: "opsz" 144; text-wrap: balance; }
 h1 em { font-style: italic; font-weight: 400; color: inherit; }
 h2 { font-family: var(--font-display); font-size: clamp(1.9rem, 3.6vw, 2.8rem); line-height: 1.08; letter-spacing: -.01em; font-variation-settings: "opsz" 96; text-wrap: balance; }
 h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.005em; }
-.eyebrow { font-size: .75rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent-deep); }
+.eyebrow { font-size: .75rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent-ink); }
 .eyebrow-stage { color: var(--teak-pale); }
 .intro { font-size: 1.2rem; line-height: 1.55; color: var(--fg-soft); max-width: 62ch; text-wrap: pretty; }
 .stage .intro { color: var(--stage-muted); }
 .section-head { display: grid; gap: 14px; max-width: 760px; margin-bottom: clamp(32px, 5vw, 56px); }
 .section-head::before { content: ""; display: block; width: 48px; height: 2px; background: var(--accent); margin-bottom: 4px; }
-.text-link { color: var(--accent-deep); font-weight: 600; border-bottom: 1px solid transparent; transition: border-color var(--dur) var(--ease); }
+.text-link {
+  display: inline-flex; align-items: center; min-height: 44px;
+  color: var(--accent-deep); font-weight: 600; border-bottom: 1px solid transparent;
+  transition: border-color var(--dur) var(--ease);
+}
 .text-link:hover { border-bottom-color: currentColor; }
 
 /* wordmark & tagline */
@@ -111,8 +128,8 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .btn:active { transform: translateY(1px); }
-.btn-accent { background: var(--teak); color: #fff; box-shadow: 0 6px 20px rgba(196,136,79,.28); }
-.btn-accent:hover { background: var(--teak-deep); box-shadow: 0 8px 24px rgba(196,136,79,.34); }
+.btn-accent { background: var(--accent); color: var(--navy-900); box-shadow: 0 6px 20px rgba(196,136,79,.28); }
+.btn-accent:hover { filter: brightness(.92); box-shadow: 0 8px 24px rgba(196,136,79,.34); }
 .btn-ghost { background: transparent; color: var(--stage-fg); border-color: var(--stage-line); }
 .btn-ghost:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.3); }
 .btn-ghost-dark { background: transparent; color: var(--stage-fg); border-color: rgba(255,255,255,.35); }
@@ -139,62 +156,216 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 @media (max-width: 960px) { .site-nav { display: none; } #header-cta { margin-left: auto; } }
 @media (max-width: 600px) { .header-note { display: none; } }
 
-/* ---------- 4. Stage (hero + showcase share one navy band) ---------- */
-.stage {
-  background: var(--stage-bg); color: var(--stage-fg);
-  background-image: radial-gradient(1100px 520px at 12% -10%, rgba(31,78,133,.38), transparent 60%);
+/* ---------- 4. The voyage: full-viewport yacht stage ---------- */
+.stage { background: var(--stage-bg); color: var(--stage-fg); }
+
+/* page-container alignment for absolutely positioned overlays inside the stage */
+:root { --stage-inset: max(var(--gutter), calc((100% - var(--container)) / 2 + var(--gutter))); }
+
+.voyage {
+  position: relative;
+  margin-top: calc(var(--header-h) * -1 - 1px);
+  height: 560vh;
+  height: 560svh;
+  background: var(--stage-bg);
+  color: var(--stage-fg);
 }
-.hero { padding-block: clamp(40px, 7vh, 88px) clamp(20px, 3vh, 36px); }
-.hero-inner { display: grid; gap: 20px; max-width: 800px; }
-.hero .tagline { margin-bottom: -6px; }
-.hero-sub { font-size: clamp(1.1rem, 1.6vw, 1.3rem); line-height: 1.5; color: #C9D6E5; max-width: 58ch; text-wrap: pretty; }
-.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
-.hero-micro { font-size: .9rem; color: var(--stage-muted); }
-@media (max-width: 600px) {
-  .hero { padding-top: 28px; }
-  .hero-inner { gap: 16px; }
+.voyage-stage {
+  position: sticky; top: 0;
+  height: 100vh;
+  height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+}
+/* A scrim laid over the canvas (z above .boat-stage): it keeps the overlay type legible
+   without putting a panel behind it, and deepens the navy at the very top and bottom so the
+   stage reads as one band with the header and the sections below. */
+.stage-sky {
+  position: absolute; inset: 0; z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(to top, rgba(7,20,39,.74), rgba(7,20,39,.24) 26%, transparent 52%),
+    linear-gradient(to bottom, rgba(7,20,39,.52), transparent 20%),
+    radial-gradient(130% 92% at 72% 46%, transparent 40%, rgba(7,20,39,.34) 100%);
+}
+.boat-stage {
+  position: absolute; inset: 0; z-index: 1;
+  width: 100%; height: 100%;
+  overflow: hidden; background: var(--stage-bg);
+}
+.hero-sentinel { position: absolute; left: 0; top: 100vh; top: 100svh; width: 1px; height: 1px; }
+
+/* hero copy — compact, lower-left, never buried over the yacht */
+.hero-overlay, .voyage-intro {
+  position: absolute; z-index: 6; left: 0; right: 0;
+  padding-inline: var(--stage-inset);
+  display: grid; gap: 14px;
+  transition: opacity .45s var(--ease), transform .45s var(--ease);
+}
+.hero-overlay > *, .voyage-intro > * { max-width: min(560px, 100%); }
+.hero-overlay > *, .voyage-intro > * { text-shadow: 0 1px 22px rgba(7,20,39,.75), 0 1px 3px rgba(7,20,39,.45); }
+.hero-actions, .hero-overlay .btn { text-shadow: none; }
+.hero-overlay { bottom: clamp(62px, 13vh, 132px); }
+.hero-overlay .tagline { margin-bottom: -4px; font-size: 1rem; }
+.hero-overlay h1 { font-size: clamp(2.05rem, 4.5vw, 3.5rem); }
+.hero-sub { font-size: clamp(1rem, 1.25vw, 1.125rem); line-height: 1.5; color: #C9D6E5; max-width: 46ch; text-wrap: pretty; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+.hero-micro { font-size: .85rem; color: var(--stage-muted); }
+.hero-overlay.is-out, .voyage-intro.is-out { opacity: 0; visibility: hidden; pointer-events: none; }
+.voyage-intro.is-in { opacity: 1; }
+.voyage-intro { bottom: clamp(62px, 13vh, 132px); opacity: 0; }
+.voyage-intro h2 { font-size: clamp(1.7rem, 2.8vw, 2.4rem); }
+.voyage-intro .intro { font-size: 1.02rem; color: var(--stage-muted); }
+
+/* floating glass info card */
+.boat-panel {
+  position: absolute; z-index: 6; bottom: clamp(56px, 9vh, 104px);
+  width: min(368px, 31vw);
+  display: grid; gap: 11px; padding: 22px 24px;
+  background: rgba(9,24,45,.62);
+  border: 1px solid rgba(255,255,255,.15); border-radius: var(--radius-lg);
+  backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  box-shadow: 0 26px 64px rgba(4,12,26,.5);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .45s var(--ease), transform .45s var(--ease), visibility 0s linear .45s;
+}
+.boat-panel.is-left  { left:  var(--gutter); transform: translate(-18px, 0); }
+.boat-panel.is-right { right: var(--gutter); transform: translate(18px, 0); }
+.boat-panel.is-visible { opacity: 1; visibility: visible; pointer-events: auto; transform: none; transition-delay: 0s; }
+@media (min-width: 901px) { .boat-panel.is-right { right: calc(var(--gutter) + 104px); } }
+.panel-eyebrow { font-size: .72rem; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; color: var(--teak-pale); }
+.panel-title { font-family: var(--font-display); font-size: 1.45rem; font-weight: 500; line-height: 1.15; letter-spacing: -.01em; }
+.panel-body { color: #C9D6E5; font-size: .98rem; line-height: 1.55; }
+.panel-cta { justify-self: start; margin-top: 4px; }
+
+/* zone rail — vertical, right edge, inside the stage */
+@media (min-width: 901px) {
+  /* a whisper of a scrim so the labels stay readable when they cross the white topsides */
+  .boat-chips::before {
+    content: ""; position: absolute; z-index: -1; inset: -14px -14px -14px -8px; border-radius: 14px;
+    background: linear-gradient(to left, rgba(7,20,39,.5), rgba(7,20,39,.26) 55%, transparent);
+  }
+}
+.boat-chips {
+  position: absolute; z-index: 7; top: 50%; transform: translateY(-50%);
+  right: clamp(14px, 3vw, 46px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  opacity: 0; pointer-events: none; transition: opacity .45s var(--ease);
+}
+.boat-chips.is-in, .boat-chips:focus-within { opacity: 1; pointer-events: auto; }
+.chip {
+  display: flex; flex-direction: row-reverse; align-items: center; gap: 10px;
+  padding: 9px 4px; background: none; border: 0; cursor: pointer;
+  font-size: .68rem; font-weight: 600; letter-spacing: .15em; text-transform: uppercase;
+  color: rgba(242,246,250,.58); white-space: nowrap;
+  text-shadow: 0 1px 10px rgba(7,20,39,.85), 0 0 2px rgba(7,20,39,.7);
+  transition: color var(--dur) var(--ease);
+}
+.chip::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: rgba(242,246,250,.34);
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.chip:hover { color: rgba(242,246,250,.92); }
+.chip:hover::before { background: var(--teak-pale); }
+.chip[aria-pressed="true"] { color: #fff; }
+.chip[aria-pressed="true"]::before { background: var(--teak); transform: scale(1.2); box-shadow: 0 0 0 4px rgba(196,136,79,.2); }
+.chip[data-zone="whole"]  { order: 0; }
+.chip[data-zone="deck"]   { order: 1; }
+.chip[data-zone="cabin"]  { order: 2; }
+.chip[data-zone="engine"] { order: 3; }
+.chip[data-zone="hull"]   { order: 4; }
+
+.boat-hint {
+  position: absolute; z-index: 5; left: 0; right: 0; padding-inline: var(--gutter);
+  bottom: clamp(14px, 2.6vh, 24px); text-align: center; font-size: .8rem; color: rgba(169,187,209,.6); letter-spacing: .02em;
+  opacity: 0; transition: opacity .45s var(--ease); pointer-events: none;
+}
+.boat-hint.is-in { opacity: 1; }
+.scroll-cue {
+  position: absolute; z-index: 6; left: 50%; transform: translateX(-50%);
+  bottom: calc(clamp(16px, 3vh, 26px) + env(safe-area-inset-bottom, 0px));
+  display: grid; justify-items: center; gap: 5px; padding: 6px 10px;
+  font-size: .68rem; font-weight: 600; letter-spacing: .18em; text-transform: uppercase;
+  color: rgba(242,246,250,.58); transition: opacity .45s var(--ease), color var(--dur) var(--ease);
+}
+.scroll-cue:hover { color: #fff; }
+.scroll-cue.is-out { opacity: 0; pointer-events: none; }
+.scroll-cue svg { animation: cue-bob 2.6s var(--ease) infinite; }
+@keyframes cue-bob { 0%, 100% { transform: translateY(0); opacity: .55; } 50% { transform: translateY(4px); opacity: 1; } }
+
+@media (max-width: 900px) {
+  .voyage { height: 520vh; height: 520svh; }
+  .hero-overlay { bottom: clamp(76px, 15vh, 140px); gap: 12px; }
+  .hero-overlay h1 { font-size: clamp(1.95rem, 7.4vw, 2.7rem); }
+  .hero-sub { font-size: 1rem; max-width: none; }
   .hero-actions { flex-direction: column; }
   .hero-actions .btn { width: 100%; }
-  #hero-cta-primary { min-height: 60px; font-size: 1.125rem; }
+  #hero-cta-primary { min-height: 58px; font-size: 1.0625rem; }
+  /* the chapter opener moves to the top of the stage: the card owns the bottom on phones */
+  .voyage-intro { top: calc(var(--header-h) + 52px); bottom: auto; gap: 8px; }
+  .voyage-intro h2 { font-size: 1.45rem; }
+  .voyage-intro .intro { font-size: .92rem; }
+  .boat-panel, .boat-panel.is-left, .boat-panel.is-right {
+    left: var(--gutter); right: var(--gutter); width: auto;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    padding: 18px 20px; gap: 9px; transform: translateY(16px);
+  }
+  .boat-panel.is-visible { transform: none; }
+  /* the phone CTA bar takes the very bottom once it appears; the card sits above it */
+  body.has-sticky .boat-panel { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+  .panel-title { font-size: 1.25rem; }
+  .panel-body { font-size: .92rem; }
+  .boat-chips {
+    top: calc(var(--header-h) + 12px); left: 0; right: 0; transform: none;
+    flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px;
+    padding-inline: 12px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .boat-chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex-direction: row; gap: 7px; font-size: .58rem; letter-spacing: .09em;
+    padding: 7px 11px; border-radius: var(--radius-pill); flex: none;
+    background: rgba(7,20,39,.6); border: 1px solid rgba(255,255,255,.1);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .chip[aria-pressed="true"] { background: rgba(196,136,79,.22); border-color: rgba(196,136,79,.6); }
+  .boat-hint { display: none; }
 }
 
-/* showcase */
-.showcase { padding-block: 8px clamp(48px, 8vh, 96px); background-image: none; }
-.showcase-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: clamp(24px, 4vw, 48px); align-items: start; }
-.showcase-side { display: grid; gap: 22px; }
-.showcase-head { display: grid; gap: 12px; }
-.showcase-head h2 { font-size: clamp(1.7rem, 2.6vw, 2.3rem); }
-.showcase-head .intro { font-size: 1.05rem; }
-.boat-stage { position: relative; width: 100%; height: clamp(380px, 62vh, 640px); overflow: hidden; border-radius: var(--radius-lg); background: var(--stage-bg-deep); box-shadow: inset 0 0 0 1px var(--stage-line); }
-.boat-hint { margin-top: 12px; font-size: .85rem; color: var(--stage-muted); letter-spacing: .02em; }
-.boat-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-  min-height: 40px; padding: 0 16px; border-radius: var(--radius-pill);
-  background: transparent; border: 1.5px solid var(--stage-line); color: var(--stage-fg);
-  font-weight: 500; font-size: .9375rem; cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+/* WebGL unavailable: the voyage degrades to a normal, stacked section */
+.voyage.is-fallback { height: auto; margin-top: 0; }
+.voyage.is-fallback .voyage-stage {
+  position: static; height: auto; overflow: visible;
+  display: grid; gap: clamp(20px, 3vw, 30px);
+  padding-block: clamp(36px, 6vh, 80px) clamp(48px, 8vh, 96px);
+  padding-inline: var(--stage-inset);
 }
-.chip:hover { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.06); }
-.chip[aria-pressed="true"] { background: var(--teak); border-color: var(--teak); color: #fff; }
-.boat-panel {
-  display: grid; gap: 12px; padding: 26px 28px;
-  background: rgba(255,255,255,.055); border: 1px solid var(--stage-line); border-radius: var(--radius-lg);
-  backdrop-filter: blur(6px);
+.voyage.is-fallback .stage-sky, .voyage.is-fallback .scroll-cue { display: none; }
+.voyage.is-fallback .hero-overlay,
+.voyage.is-fallback .voyage-intro {
+  position: static; padding-inline: 0; opacity: 1 !important; visibility: visible; transform: none;
 }
-.panel-eyebrow { font-size: .75rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--teak-pale); }
-.panel-title { font-family: var(--font-display); font-size: 1.55rem; font-weight: 500; line-height: 1.15; letter-spacing: -.01em; }
-.panel-body { color: #C9D6E5; font-size: 1rem; }
-.panel-cta { justify-self: start; margin-top: 6px; }
-@media (max-width: 960px) {
-  .showcase-grid { grid-template-columns: 1fr; }
-  .showcase-side { display: contents; }
-  .showcase-head { order: -1; margin-bottom: 18px; }
-  .showcase-stagecol { order: 0; }
-  .boat-chips { order: 1; margin-top: 6px; }
-  .boat-panel { order: 2; }
-  .boat-stage { height: 420px; }
+.voyage.is-fallback .boat-stage {
+  position: relative; inset: auto; height: clamp(300px, 46vh, 460px);
+  border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--stage-line);
 }
-/* CSS-only fallback when WebGL is unavailable */
+.voyage.is-fallback .boat-chips {
+  position: static; transform: none; flex-direction: row; flex-wrap: wrap;
+  align-items: center; justify-content: flex-start; gap: 8px; padding-inline: 0; overflow: visible;
+  opacity: 1; visibility: visible;
+}
+.voyage.is-fallback .chip {
+  flex-direction: row; gap: 8px; min-height: 40px; padding: 0 16px; font-size: .8125rem; letter-spacing: .08em;
+  border-radius: var(--radius-pill); background: transparent; border: 1.5px solid var(--stage-line); color: var(--stage-fg);
+}
+.voyage.is-fallback .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--navy-900); }
+.voyage.is-fallback .chip[aria-pressed="true"]::before { background: #fff; box-shadow: none; }
+.voyage.is-fallback .boat-panel {
+  position: static; width: auto; max-width: 640px; opacity: 1 !important; visibility: visible;
+  pointer-events: auto; transform: none; bottom: auto;
+}
+.voyage.is-fallback .boat-hint { position: static; padding-inline: 0; text-align: left; opacity: 1; bottom: auto; }
+/* the CSS-only stage that stands in for the canvas when WebGL is unavailable */
 .boat-stage--fallback { background: radial-gradient(60% 40% at 50% 70%, rgba(31,78,133,.6), transparent 70%), var(--stage-bg-deep); }
 .boat-stage--fallback::before {
   content: ""; position: absolute; left: 18%; right: 18%; top: 48%; height: 12%;
@@ -203,6 +374,30 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 .boat-stage--fallback::after {
   content: "Interactive 3D needs WebGL. Use the zone buttons to explore."; position: absolute; left: 0; right: 0; bottom: 18px;
   text-align: center; font-size: .85rem; color: var(--stage-muted); padding-inline: 16px;
+}
+
+.voyage-fallback { display: none; }
+.voyage.is-fallback .voyage-fallback {
+  display: grid; gap: 14px; padding-inline: var(--stage-inset);
+  padding-bottom: clamp(40px, 7vh, 88px);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.voyage-card {
+  display: grid; gap: 8px; padding: 20px 22px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--stage-line); border-radius: var(--radius-lg);
+}
+.voyage-card h3 { font-size: 1.05rem; }
+.voyage-card p { color: #C9D6E5; font-size: .95rem; }
+.voyage-card .eyebrow { color: var(--teak-pale); }
+
+/* reveal-on-scroll. `.js-reveal` is set on <html> by the inline script in <head> — before the
+   first paint, and never under reduced motion — so no-JS readers get every section at rest. */
+.js-reveal .section-head { opacity: 0; transform: translateY(16px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+.js-reveal .section-head.is-in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .js-reveal .section-head, .js-reveal .section-head.is-in { opacity: 1 !important; transform: none !important; transition: none; }
+  .scroll-cue svg { animation: none; }
+  .hero-overlay, .voyage-intro, .boat-panel { transition: none; }
 }
 
 /* ---------- 5. Sections ---------- */
@@ -282,8 +477,8 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 .marina-berths { font-size: .85rem; color: var(--fg-soft); font-variant-numeric: tabular-nums; }
 .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--radius-pill); font-size: .75rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .status-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.status-pill.is-serving { color: var(--status-serving); background: var(--status-serving-soft); }
-.status-pill.is-soon { color: var(--accent-deep); background: var(--status-soon-soft); }
+.status-pill.is-serving { color: var(--status-serving-ink); background: var(--status-serving-soft); }
+.status-pill.is-soon { color: var(--status-soon-ink); background: var(--status-soon-soft); }
 .marinas-footnote { margin-top: 22px; font-size: .95rem; color: var(--fg-soft); max-width: 62ch; }
 @media (max-width: 900px) { .marina-list { grid-template-columns: 1fr; } }
 
@@ -327,19 +522,19 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 }
 .field textarea { resize: vertical; min-height: 96px; }
 .field select { background-image: linear-gradient(45deg, transparent 50%, var(--fg-soft) 50%), linear-gradient(135deg, var(--fg-soft) 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 14px) 50%; background-size: 6px 6px; background-repeat: no-repeat; padding-right: 40px; }
-.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(196,136,79,.22); }
-.field.is-invalid input, .field.is-invalid select { border-color: #B84A3A; }
-.field .field-error { font-size: .85rem; color: #B84A3A; text-transform: none; letter-spacing: 0; font-weight: 500; }
-.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent-deep); box-shadow: 0 0 0 3px rgba(196,136,79,.22); }
+.field.is-invalid input, .field.is-invalid select, .field.is-invalid textarea { border-color: var(--danger); }
+.field .field-error { font-size: .85rem; color: var(--danger); text-transform: none; letter-spacing: 0; font-weight: 500; }
+.hp { display: none; }   /* display:none, so browser autofill skips the honeypot */
 .form-actions { display: grid; gap: 12px; margin-top: 6px; }
 .form-actions .btn { justify-self: start; }
 .form-privacy { font-size: .85rem; color: var(--fg-soft); }
 .booking-status { grid-column: 1 / -1; font-size: .98rem; color: var(--fg); }
 .booking-status:empty { display: none; }
 .booking-status.is-success { padding: 16px 18px; background: var(--status-serving-soft); border-left: 3px solid var(--status-serving); border-radius: 0 var(--radius) var(--radius) 0; }
-.booking-status.is-error { color: #B84A3A; }
+.booking-status.is-error { color: var(--danger); }
 .booking-status .fallback { display: grid; gap: 10px; margin-top: 10px; }
-.booking-status textarea { width: 100%; min-height: 110px; padding: 12px; font: inherit; font-size: .95rem; border: 1.5px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--fg); }
+.booking-status textarea { width: 100%; min-height: 110px; padding: 12px; font: inherit; font-size: 1rem; border: 1.5px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--fg); }
 @media (max-width: 900px) {
   .book-layout { grid-template-columns: 1fr; }
   .book .section-head { margin-bottom: 8px; }
@@ -357,7 +552,7 @@ h3 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; letter-spacing: -.00
 .footer-blurb { color: var(--stage-muted); max-width: 42ch; font-size: .98rem; }
 .footer-col { display: grid; gap: 8px; align-content: start; }
 .footer-label { font-size: .72rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--teak-pale); }
-.footer-col a { color: var(--stage-fg); transition: color var(--dur) var(--ease); }
+.footer-col a { display: inline-flex; align-items: center; min-height: 44px; color: var(--stage-fg); transition: color var(--dur) var(--ease); }
 .footer-col a:hover { color: var(--teak-pale); }
 .footer-area { color: var(--stage-muted); font-size: .98rem; }
 .social-links { display: grid; gap: 6px; }

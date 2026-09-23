@@ -6,6 +6,7 @@
 <title>aBeam — On-Demand Boat Concierge, San Francisco</title>
 <meta name="description" content="Shore-side concierge and trip management for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs.">
 <meta name="theme-color" content="#0B1F3A">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230B1F3A'/><text x='16' y='24' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='23' font-weight='700' fill='%23C4884F'>a</text></svg>">
 <meta property="og:title" content="aBeam — On-Demand Boat Concierge, San Francisco">
 <meta property="og:description" content="Shore-side concierge and trip management for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs.">
 <meta property="og:type" content="website">
@@ -21,9 +22,12 @@
   }
 }
 </script>
+<link rel="modulepreload" href="voyage.js">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="boat.css">
 <link rel="stylesheet" href="map.css">
+<script>/* Reveal animations are opt-in: without JS (or under reduced motion) every section is visible at rest. */
+(function(){try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('js-reveal');}catch(e){}})();</script>
 </head>
 <body>
 
@@ -44,33 +48,30 @@
 
 <main id="top">
 
-  <!-- 1 · HERO -->
-  <section id="hero" class="hero stage" aria-labelledby="hero-headline">
-    <div class="container hero-inner">
-      <p class="tagline">By your side, <span class="tagline-b">Beyond</span> the shore</p>
-      <h1 id="hero-headline">Text us what the boat needs. <em>We’ll handle it.</em></h1>
-      <p class="hero-sub">aBeam is a shore-side concierge for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs, from provisions and parts to a return chased or a slip at the next stop, and we do it on land so the crew can stay aboard.</p>
-      <div class="hero-actions">
-        <a id="hero-cta-primary" class="btn btn-accent btn-xl sms" href="sms:+14155550123">Text us</a>
-        <a id="hero-cta-secondary" class="btn btn-ghost btn-xl" href="#book">Send a request</a>
-      </div>
-      <p class="hero-micro">Same-day requests welcome. Launching at South Beach, Pier 39 and Marina Green.</p>
-    </div>
-  </section>
+  <!-- 1 · THE VOYAGE — full-viewport yacht stage; scroll drives the camera along the path.
+       #voyage is the tall scroll region; #voyage-stage is pinned inside it at 100svh. -->
+  <section id="voyage" class="voyage stage" aria-labelledby="hero-headline">
+    <div id="voyage-stage" class="voyage-stage">
+        <div class="stage-sky" aria-hidden="true"></div>
+        <div id="boat-stage" class="boat-stage" role="region" aria-label="Interactive 3D yacht. Scroll to travel around the boat, or use the zone buttons."></div>
 
-  <!-- 2 · INTERACTIVE 3D BOAT -->
-  <section id="showcase" class="showcase stage" aria-labelledby="showcase-title">
-    <div class="container showcase-grid">
-      <div class="showcase-stagecol">
-        <div id="boat-stage" class="boat-stage" aria-label="Interactive 3D boat. Use the zone buttons below to explore." role="region"></div>
-        <p id="boat-hint" class="boat-hint">Drag to orbit · Tap a marker or a chip</p>
-      </div>
-      <div class="showcase-side">
-        <div class="showcase-head">
+        <div id="hero-overlay" class="hero-overlay">
+          <p class="tagline">By your side, <span class="tagline-b">Beyond</span> the shore</p>
+          <h1 id="hero-headline">Text us what the boat needs. <em>We’ll handle it.</em></h1>
+          <p class="hero-sub">aBeam is a shore-side concierge for captains, crews and owners at San Francisco’s city marinas. Text us what the boat needs, from provisions and parts to a return chased or a slip at the next stop, and we do it on land so the crew can stay aboard.</p>
+          <div class="hero-actions">
+            <a id="hero-cta-primary" class="btn btn-accent btn-xl sms" href="sms:+14155550123">Text us</a>
+            <a id="hero-cta-secondary" class="btn btn-ghost btn-xl" href="#book">Send a request</a>
+          </div>
+          <p class="hero-micro">Same-day requests welcome. Launching at South Beach, Pier 39 and Marina Green.</p>
+        </div>
+
+        <div id="voyage-intro" class="voyage-intro">
           <p class="eyebrow eyebrow-stage">Around the boat</p>
           <h2 id="showcase-title">One text covers the whole boat.</h2>
           <p class="intro">Orbit the boat and open a zone. Deck, cabin, engine room, hull: each is something you can ask us for, most of it handled from the dock.</p>
         </div>
+
         <div id="boat-chips" class="boat-chips" role="group" aria-label="Boat zones">
           <button type="button" class="chip" data-zone="whole" aria-pressed="true">Whole boat</button>
           <button type="button" class="chip" data-zone="hull" aria-pressed="false">Hull &amp; exterior</button>
@@ -78,14 +79,25 @@
           <button type="button" class="chip" data-zone="cabin" aria-pressed="false">Cabin</button>
           <button type="button" class="chip" data-zone="engine" aria-pressed="false">Engine room</button>
         </div>
-        <aside id="boat-panel" class="boat-panel" aria-live="polite">
+
+        <aside id="boat-panel" class="boat-panel" aria-live="polite" data-zone="whole">
           <p class="panel-eyebrow">Trip management</p>
           <h3 class="panel-title">The whole trip, coordinated.</h3>
           <p class="panel-body">Berths at the next stop, fuel and pump-out timing, provisioning by the day, vendors booked before you leave and chased while you’re out. One point of contact, every request logged.</p>
           <a class="panel-cta btn btn-accent-outline" href="#book">Ask about trip management</a>
         </aside>
+
+        <p id="boat-hint" class="boat-hint">Drag to orbit · Tap a marker or a chip</p>
+
+        <a id="scroll-cue" class="scroll-cue" href="#how">
+          <span>Explore the boat</span>
+          <svg viewBox="0 0 24 14" width="20" height="12" aria-hidden="true" focusable="false"><path d="M2 2 L12 11 L22 2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
       </div>
-    </div>
+
+    <div id="hero-sentinel" class="hero-sentinel" aria-hidden="true"></div>
+    <!-- filled by main.js only when WebGL is unavailable: the zones as stacked cards -->
+    <div id="voyage-fallback" class="voyage-fallback" hidden></div>
   </section>
 
   <!-- 3 · HOW IT WORKS -->
@@ -182,7 +194,7 @@
       </div>
       <div class="chart-frame">
         <div id="marina-map" class="marina-map">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 736" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="chart-title chart-desc" class="chart">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 736" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="chart-title" aria-describedby="chart-desc" class="chart">
 <title id="chart-title">San Francisco city front — aBeam service chart</title>
 <desc id="chart-desc">A simplified nautical-style chart of the San Francisco northern and eastern waterfront, from the Golden Gate Bridge east past Alcatraz to Treasure Island and south along the Embarcadero to Mission Bay. It locates the three marinas aBeam plans to serve: the San Francisco Marina at Marina Green, Pier 39 Marina at Fisherman's Wharf, and South Beach Harbor at Pier 40 near Oracle Park. Decorative; not for navigation.</desc>
 <style>.ch-water{fill:var(--chart-water,#D7E6F0)}
@@ -491,7 +503,7 @@
 </svg>
         </div>
       </div>
-      <div class="marina-legend" aria-label="Legend">
+      <div class="marina-legend" role="group" aria-label="Legend">
         <span class="legend-item"><span class="legend-dot is-serving" aria-hidden="true"></span>Currently serving</span>
         <span class="legend-item"><span class="legend-dot is-soon" aria-hidden="true"></span>Coming soon</span>
       </div>
@@ -621,8 +633,8 @@
           <textarea id="notes" name="notes" rows="3" placeholder="Ice and groceries to the dock by 1pm Saturday. Return the wrong impeller to the chandlery and chase the refund." required></textarea>
         </div>
         <div class="hp" aria-hidden="true">
-          <label for="company">Company</label>
-          <input id="company" name="company" type="text" tabindex="-1" autocomplete="off">
+          <label for="hp_token">Leave this field empty</label>
+          <input id="hp_token" name="hp_token" type="text" tabindex="-1" autocomplete="off">
         </div>
         <div class="field field-wide form-actions">
           <button id="booking-submit" type="submit" class="btn btn-accent btn-xl">Send request</button>
@@ -657,16 +669,16 @@
     <div class="footer-col">
       <p class="footer-label">Follow</p>
       <ul class="social-links">
-        <li><a href="#" rel="noopener" aria-label="aBeam on Instagram">Instagram</a></li>
-        <li><a href="#" rel="noopener" aria-label="aBeam on LinkedIn">LinkedIn</a></li>
-        <li><a href="#" rel="noopener" aria-label="aBeam on Nextdoor">Nextdoor</a></li>
+        <li><span>Instagram</span></li>
+        <li><span>LinkedIn</span></li>
+        <li><span>Nextdoor</span></li>
       </ul>
     </div>
     <p class="footer-legal">© <span id="year">2026</span> aBeam · San Francisco, California · All rights reserved.</p>
   </div>
 </footer>
 
-<div id="sticky-cta" class="sticky-cta" hidden>
+<div id="sticky-cta" class="sticky-cta" role="region" aria-label="Quick contact" hidden>
   <a class="btn btn-accent sms" href="sms:+14155550123">
     <span class="sticky-label">Text us</span>
     <span class="sticky-sub">Same-day requests · quoted up front</span>

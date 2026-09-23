@@ -7,23 +7,35 @@ const VIEW_H = 736;
 export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
   const coarse = window.matchMedia('(pointer: coarse)').matches;
   const dockQuery = window.matchMedia('(max-width: 600px)');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   // Overlay for pins
   const overlay = document.createElement('div');
   overlay.className = 'chart-overlay';
   mapEl.appendChild(overlay);
 
-  // Dock (phone): the popup renders below the chart instead of floating
+  // Decorative frame: a hairline mat and soft edge vignette so the chart reads
+  // as a mounted print. Never hit-tested, never announced.
+  const vignette = document.createElement('div');
+  vignette.className = 'chart-vignette';
+  vignette.setAttribute('aria-hidden', 'true');
+  overlay.appendChild(vignette);
+
+  // Dock (phone): the popup renders below the chart instead of floating.
+  // It sits after the marina list so a docked card follows the button that
+  // opened it in both reading and tab order.
   const frame = mapEl.closest('.chart-frame') || mapEl;
   const dock = document.createElement('div');
   dock.className = 'chart-popup-dock';
-  frame.insertAdjacentElement('afterend', dock);
+  (listEl || frame).insertAdjacentElement('afterend', dock);
 
-  // Popup (one, shared)
+  // Popup (one, shared). No role="dialog": it opens on hover/focus and never
+  // takes focus on its own, so dialog semantics would promise what it does not
+  // do. It stays a labelled, programmatically focusable region instead.
   const popup = document.createElement('div');
   popup.className = 'chart-popup';
   popup.id = 'marina-popup';
-  popup.setAttribute('role', 'dialog');
+  popup.tabIndex = -1;
   popup.setAttribute('aria-labelledby', 'marina-popup-name');
   popup.hidden = true;
   popup.innerHTML = `
@@ -33,22 +45,24 @@ export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
     <p class="popup-row"><span class="status-pill"></span><span class="popup-berths"></span></p>
     <a class="popup-cta text-link" href="#book"></a>
   `;
-  overlay.appendChild(popup);
 
   const pins = new Map();
   let openId = null;
   let pinned = false;
   let closeTimer = null;
+  let suppressFocusOpen = false;
 
-  marinas.forEach((m) => {
+  marinas.forEach((m, i) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `pin is-${m.status}`;
     btn.dataset.id = m.id;
     btn.style.left = `${(m.x / VIEW_W) * 100}%`;
     btn.style.top = `${(m.y / VIEW_H) * 100}%`;
+    btn.style.setProperty('--pin-i', String(i)); // staggers the breathing halo
     btn.setAttribute('aria-expanded', 'false');
     btn.setAttribute('aria-controls', 'marina-popup');
+    btn.setAttribute('aria-describedby', 'marina-popup');
     btn.setAttribute('aria-label', `${m.name}: ${statusLabels[m.status] || m.status}`);
     btn.innerHTML = `<span class="pin-pulse" aria-hidden="true"></span><span class="pin-dot" aria-hidden="true"></span><span class="pin-label" aria-hidden="true">${m.short || m.name}</span>`;
     overlay.appendChild(btn);
@@ -58,7 +72,11 @@ export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
       btn.addEventListener('mouseenter', () => { if (!pinned) open(m.id, false); });
       btn.addEventListener('mouseleave', () => { if (!pinned) scheduleClose(); });
     }
-    btn.addEventListener('focus', () => open(m.id, false));
+    // !suppressFocusOpen: a programmatic focus restore must not re-open what the
+    // user just dismissed. Passing `pinned` through keeps the card following the
+    // keyboard while preserving the pinned flag, so a lingering mouseleave can
+    // no longer close it out from under focus.
+    btn.addEventListener('focus', () => { if (!suppressFocusOpen) open(m.id, pinned); });
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
       if (openId === m.id && pinned) close();
@@ -72,11 +90,19 @@ export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
     });
   });
 
+  // After the pins, so Tab reaches the open card from the pin that opened it.
+  overlay.appendChild(popup);
+
   if (!coarse) {
     popup.addEventListener('mouseenter', () => { if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } });
     popup.addEventListener('mouseleave', () => { if (!pinned) scheduleClose(); });
   }
-  popup.querySelector('.popup-close').addEventListener('click', (ev) => { ev.stopPropagation(); close(); });
+  popup.querySelector('.popup-close').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const id = openId;
+    close();
+    restore(id);
+  });
   popup.querySelector('.popup-cta').addEventListener('click', () => { if (openId && onBook) onBook(openId); });
   popup.addEventListener('click', (ev) => ev.stopPropagation());
 
@@ -85,22 +111,54 @@ export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
     if (ev.target.closest('.pin') || ev.target.closest('.chart-popup')) return;
     close();
   });
-  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && openId) { const id = openId; close(); pins.get(id)?.focus(); } });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && openId) { const id = openId; close(); restore(id); } });
 
   if (listEl) {
     listEl.querySelectorAll('.marina-item').forEach((li) => {
-      li.addEventListener('click', (ev) => {
+      const trigger = li.querySelector('.marina-item-btn') || li;
+      if (trigger !== li) {
+        trigger.setAttribute('aria-controls', 'marina-popup');
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+      trigger.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const id = li.dataset.id;
         if (openId === id && pinned) { close(); return; }
         open(id, true);
-        if (dockQuery.matches) mapEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (dockQuery.matches) {
+          mapEl.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'center' });
+          // the card now sits below this button — send the reader to it
+          popup.focus({ preventScroll: true });
+        }
       });
     });
   }
 
   window.addEventListener('resize', () => { if (openId) position(openId); });
-  dockQuery.addEventListener('change', () => { if (openId) position(openId); });
+  // Safari/iOS before 14 only has the deprecated addListener on a MediaQueryList;
+  // calling addEventListener there throws and would abort the rest of initMap.
+  const onDockChange = () => { if (openId) position(openId); };
+  if (typeof dockQuery.addEventListener === 'function') dockQuery.addEventListener('change', onDockChange);
+  else if (typeof dockQuery.addListener === 'function') dockQuery.addListener(onDockChange);
+
+  // Return focus to a pin without the focus handler re-opening the card the
+  // user just dismissed.
+  function restore(id) {
+    const btn = id && pins.get(id);
+    if (!btn) return;
+    suppressFocusOpen = true;
+    btn.focus();
+    suppressFocusOpen = false;
+  }
+
+  function syncList(id) {
+    if (!listEl) return;
+    listEl.querySelectorAll('.marina-item').forEach((li) => {
+      const on = li.dataset.id === id;
+      li.classList.toggle('is-active', on);
+      li.querySelector('.marina-item-btn')?.setAttribute('aria-expanded', on ? 'true' : 'false');
+    });
+  }
 
   function scheduleClose() {
     if (closeTimer) clearTimeout(closeTimer);
@@ -169,7 +227,7 @@ export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
       b.setAttribute('aria-expanded', key === id ? 'true' : 'false');
       b.classList.toggle('is-open', key === id);
     });
-    if (listEl) listEl.querySelectorAll('.marina-item').forEach((li) => li.classList.toggle('is-active', li.dataset.id === id));
+    syncList(id);
   }
 
   function close() {
@@ -177,7 +235,7 @@ export function initMap({ mapEl, listEl, marinas, statusLabels, ui, onBook }) {
     pinned = false;
     popup.hidden = true;
     pins.forEach((b) => { b.setAttribute('aria-expanded', 'false'); b.classList.remove('is-open'); });
-    if (listEl) listEl.querySelectorAll('.marina-item').forEach((li) => li.classList.remove('is-active'));
+    syncList(null);
   }
 
   return { open, close };
