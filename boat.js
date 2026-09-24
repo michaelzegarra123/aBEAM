@@ -620,7 +620,7 @@ function buildYacht(env, isSmall) {
   const lampG = M(new THREE.MeshStandardMaterial({ color: 0x062615, emissive: 0x2fc07a, emissiveIntensity: 1.1, roughness: 0.3 }));
   const lampW = M(new THREE.MeshStandardMaterial({ color: 0x2a2c2e, emissive: 0xfff2d8, emissiveIntensity: 0.9, roughness: 0.3 }));
   for (const m of mats) m.envMap = env;
-  grainTex.anisotropy = 2;
+  grainTex.anisotropy = 8;
 
   const add = (geo, mat, cast = false, recv = false) => {
     const m = new THREE.Mesh(geo, mat);
@@ -671,19 +671,19 @@ function buildYacht(env, isSmall) {
   // navy boot top across the transom, matched to the hull band
   add(gridGeometry(1, 6, (a, b) => {
     const y = BOOT_LO - 0.16 + (BOOT_HI - BOOT_LO + 0.16) * b;
-    return new THREE.Vector3(X_STERN - 0.006, y, (a < 0.5 ? -1 : 1) * transomHalfAtY(y));
+    return new THREE.Vector3(X_STERN - 0.022, y, (a < 0.5 ? -1 : 1) * transomHalfAtY(y));
   }, false), navy);
 
   // carry the navy sheer stripe across the transom
   add(gridGeometry(1, 1, (a2, b2) => {
     const y = chineY(0) + (deckEdgeY(0) - chineY(0)) * (0.781 + 0.048 * b2);
-    return new THREE.Vector3(X_STERN - 0.006, y, (a2 < 0.5 ? -1 : 1) * transomHalfAtY(y));
+    return new THREE.Vector3(X_STERN - 0.022, y, (a2 < 0.5 ? -1 : 1) * transomHalfAtY(y));
   }, false), navy);
 
   // beach-club door, set into the transom with a stainless surround
   const doorW = 2.8, doorH = 0.9, doorY = 1.26;
   const garage = add(new THREE.BoxGeometry(0.04, doorH, doorW), dash, false, false);
-  garage.position.set(X_STERN - 0.012, doorY, 0);
+  garage.position.set(X_STERN - 0.03, doorY, 0);
   for (const dy of [doorH / 2 + 0.03, -doorH / 2 - 0.03]) {
     const bar = add(new THREE.BoxGeometry(0.05, 0.055, doorW + 0.14), steel);
     bar.position.set(X_STERN - 0.02, doorY + dy, 0);
@@ -1375,7 +1375,7 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   scene.fog = new THREE.FogExp2(STAGE_BG, 0.0042);
 
   let envMap = null;
-  const camera = new THREE.PerspectiveCamera(FOV_BASE, 1, 0.4, 420);
+  const camera = new THREE.PerspectiveCamera(FOV_BASE, 1, 1.2, 420);
 
   /* ---- lights: late golden hour, raking down the topsides ---- */
   const key = new THREE.DirectionalLight(0xffdfa4, 3.1);
@@ -1502,7 +1502,7 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   /* ---- yacht (built in stage 3, below) ---- */
   let boat = null, occluders = [], overlays = {};
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
-  waterNormal.anisotropy = Math.min(4, maxAniso);
+  waterNormal.anisotropy = Math.min(8, maxAniso);
 
   /* ---- the path camera ----------------------------------------------------------------
      pathP is the only camera state. Scroll sets it (voyage.js), a chip click tweens it when
@@ -1845,7 +1845,7 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     boat = built.group;
     occluders = built.occluders;
     overlays = built.overlays;
-    for (const t of built.texs) t.anisotropy = Math.min(4, maxAniso);
+    for (const t of built.texs) t.anisotropy = Math.min(8, maxAniso);
     scene.add(boat);
     buildMarkers();
     if (pendingZone) { const z = pendingZone; pendingZone = null; showZone(z); }
