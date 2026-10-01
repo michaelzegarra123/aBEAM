@@ -2,7 +2,8 @@
 // Interactive 3D motor yacht (~24 m LOA), built procedurally with Three.js.
 // No model files, no image files, no fetches: the hull and superstructure are lofted /
 // extruded in code, the teak and water textures are drawn on a <canvas>, and the
-// environment map is a shader sky run through PMREMGenerator.
+// environment map is a shader sky run through PMREMGenerator. She lies in a harbour cove
+// built the same way (§ 6b): hills, a pastel village, woods, a lighthouse, moored boats.
 // Exposes: initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, ui, onNavigate })
 //   → { stops, showZone, selectZone, setVoyageProgress, getTriangleInfo, destroy } | null
 // The camera is not orbit-controlled: it rides a spline through the voyage stops (see § 7),
@@ -10,7 +11,7 @@
 
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const STAGE_BG = 0x0b1f3a;
 const clamp = THREE.MathUtils.clamp;
@@ -445,8 +446,10 @@ function canvasRadial(size, stops) {
 }
 
 /* ==================================================================== 4. environment (IBL)
-   A gradient sky with a sun disc, rendered into a PMREM cubemap. This is what makes
-   the gelcoat, the smoked glass and the stainless read as real materials.        */
+   The cove's own sky (§ 6b), rendered into a PMREM cubemap: what the gelcoat, the smoked glass,
+   the stainless and the water reflect is the sky in the frame, with the wooded hills round the
+   harbour as a dark band low down on every bearing but the mouth, and the sea below. That is
+   what makes the yacht sit in the cove rather than in front of it.                         */
 
 const SUN = new THREE.Vector3(17, 6.8, -3.6).normalize();
 
@@ -457,47 +460,65 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
-const SKY_FRAG = /* glsl */`
-uniform vec3 zenith;
-uniform vec3 horizon;
-uniform vec3 below;
-uniform vec3 sunDir;
-uniform vec3 sunColor;
-uniform vec3 glowColor;
-uniform float gain;
+// (COVE_SKY_GLSL, from § 6b, is prepended when the bake runs)
+const ENV_FRAG = /* glsl */`
+uniform vec3 envLand;
+uniform vec3 envTown;
+uniform vec3 envSea;
+uniform vec3 envGlow;
+uniform float envGain;
 varying vec3 vDir;
+float envBump(float a, float c, float w) {   // raised cosine in azimuth (radians)
+  float d = abs(mod(a - c + 3.14159265, 6.2831853) - 3.14159265);
+  return d >= w ? 0.0 : 0.5 + 0.5 * cos(3.14159265 * d / w);
+}
 void main() {
   vec3 d = normalize(vDir);
   float y = d.y;
-  vec3 c = y > 0.0
-    ? mix(horizon, zenith, pow(clamp(y, 0.0, 1.0), 0.42))
-    : mix(horizon, below, pow(clamp(-y, 0.0, 1.0), 0.30));
-  float s = dot(d, sunDir);
-  // the sun: a hard disc, a tight bloom, and a broad warm wash that sits on the horizon
-  c += sunColor * smoothstep(0.9968, 0.9992, s) * 30.0;
-  c += sunColor * pow(max(s, 0.0), 44.0) * 1.15;
-  c += glowColor * pow(max(s, 0.0), 5.5) * 0.42;
-  c += glowColor * pow(1.0 - abs(y), 9.0) * 0.30;
-  gl_FragColor = vec4(c * gain, 1.0);
+  vec3 c = coveSky(d);
+  float facing;
+  vec3 horizon = coveHorizon(d.xz / max(length(d.xz), 1e-4), facing);
+  // the sun itself (the frame never shows it, but the glass and the steel catch it), and the warm
+  // haze it leaves all round the horizon at this hour
+  float s = max(dot(d, cvSunDir), 0.0);
+  c += cvSunColor * (smoothstep(0.9968, 0.9992, s) * 12.0 + pow(s, 44.0) * 0.8);
+  c += envGlow * pow(1.0 - abs(y), 6.0) * step(-0.02, y);
+  // the hills: every bearing but the harbour mouth (-48..+8 deg), their ridge 6-16 deg up
+  float az = atan(d.z, d.x);
+  float land = 1.0 - envBump(az, -0.35, 0.62);
+  float ridge = 0.19 + 0.09 * envBump(az, -2.51, 0.85) - 0.1 * envBump(az, -0.94, 0.3);
+  float band = land * (1.0 - smoothstep(ridge - 0.02, ridge + 0.02, y));
+  vec3 hills = mix(envLand, envTown, envBump(az, -2.44, 0.45) * (1.0 - smoothstep(0.02, 0.09, y)));
+  c = mix(c, mix(hills, horizon, 0.35), band);
+  // below the horizon, the sea: the bright sky it mirrors at a graze, its own teal further down
+  if (y < 0.0) c = mix(mix(horizon * 0.5, c, band * 0.6), envSea, smoothstep(0.0, -0.16, y));
+  gl_FragColor = vec4(c * envGain, 1.0);
 }`;
 
-function buildEnvironment(renderer) {
+// U: the cove's sky uniforms. The bake keeps their shape (the gradient, the sun's bearing, the warm
+// side and the cool side, the hills, the sea) but is lit brighter than the frame: the visible sky is
+// held down so the stage stays one band with the navy header, while the yacht's starboard side,
+// which every stop looks at and the low sun never reaches, is lit by this sky alone.
+function buildEnvironment(renderer, U) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   const skyScene = new THREE.Scene();
   const geo = new THREE.SphereGeometry(50, 32, 20);
   const mat = new THREE.ShaderMaterial({
     vertexShader: SKY_VERT,
-    fragmentShader: SKY_FRAG,
+    fragmentShader: COVE_SKY_GLSL + ENV_FRAG,
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      zenith: { value: new THREE.Color(0x2a6ab5) },
-      horizon: { value: new THREE.Color(0xffd9a0) },
-      below: { value: new THREE.Color(0x0a1c33) },
-      sunDir: { value: SUN.clone() },
-      sunColor: { value: new THREE.Color(0xffeccd) },
-      glowColor: { value: new THREE.Color(0xffb96b) },
-      gain: { value: 1.34 },
+      ...U,
+      cvZenith: { value: new THREE.Color(0x3d6eae) },
+      cvMid: { value: new THREE.Color(0xb9b3b4) },
+      cvHorizonCool: { value: new THREE.Color(0xe6d3bd) },
+      cvHorizonWarm: { value: new THREE.Color(0xffd6a6) },
+      envLand: { value: new THREE.Color(0xa08e68) },
+      envTown: { value: new THREE.Color(0xd49a6a) },
+      envSea: { value: new THREE.Color(0x12232b) },
+      envGlow: { value: new THREE.Color(0xffb870).multiplyScalar(0.32) },
+      envGain: { value: 1.5 },
     },
   });
   const sky = new THREE.Mesh(geo, mat);
@@ -1253,32 +1274,1784 @@ function buildYacht(env, isSmall) {
 }
 
 
+/* ==================================================================== 6b. the harbour cove
+   A Ligurian cove wrapped round the yacht: wooded hills, a pastel village climbing from a
+   curved quay, a church on its point, a fort and a lighthouse on the headland, the harbour
+   full of small boats. All of it is procedural and all of it is backdrop: it never casts or
+   receives shadows, never joins the marker occluders, and every material shares one haze
+   model (the sky colour along the view ray), so distant ridges dissolve into the sky behind
+   them instead of popping against it.
+
+   Layout, as azimuth a = atan2(z, x) round the yacht (bow = +x, the low sun at a ≈ -12°).
+   Every voyage stop looks toward -z, so the cove is composed for that half:
+     the harbour mouth   a ∈ (-48°, +8°)    open sea dead ahead of the bow, into the sun
+     the headland        a ∈ (-102°, -48°)  wooded point, fort, lighthouse on its tip
+     the village         a ∈ (-166°, -114°) quay, piazza, pastel houses climbing the slope
+     the west arm        a ∈ (+150°, -166°) villas and stone pines
+     behind the cameras  a ∈ (+8°, +150°)   hills only, closing the ring                    */
+
+const TAU = Math.PI * 2;
+const D2R = Math.PI / 180;
+const SUN_AZ = Math.atan2(SUN.z, SUN.x);
+const COVE = {
+  a0: 8 * D2R,       // the land arc starts on the far side of the mouth...
+  span: 304 * D2R,   // ...and runs anticlockwise round to the headland tip at -48°
+  rOut: 440,         // outer edge of the terrain grid
+  quay: 170,         // the quay face: the village's waterline
+  quayTop: 1.4,      // quay and piazza level
+  front: 185,        // the waterfront row's facade line
+  mask: 1200,        // world span of the shore-distance field, centred on the yacht
+};
+
+const BEHIND = [40 * Math.PI / 180, 150 * Math.PI / 180];   // azimuths no camera ever looks toward
+const sstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+// raised-cosine bump in azimuth (degrees): 1 at c, 0 beyond ±w
+function bumpDeg(ad, c, w) {
+  let d = Math.abs(ad - c) % 360;
+  if (d > 180) d = 360 - d;
+  return d >= w ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * d / w);
+}
+// 1 inside [lo, hi] degrees (no wrap), feathered ±f
+const bandDeg = (ad, lo, hi, f) => sstep(lo - f, lo + f, ad) * (1 - sstep(hi - f, hi + f, ad));
+
+function hash2(ix, iy, s) {
+  let h = (Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(s, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, y, s) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy, s), b = hash2(ix + 1, iy, s), c = hash2(ix, iy + 1, s), d = hash2(ix + 1, iy + 1, s);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm(x, y, oct, s) {
+  let sum = 0, amp = 0.5, f = 1, norm = 0;
+  for (let i = 0; i < oct; i++) { sum += amp * vnoise(x * f, y * f, s + i * 31); norm += amp; f *= 2.07; amp *= 0.5; }
+  return sum / norm;
+}
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// the waterline radius at azimuth ad (degrees)
+function shoreR(ad) {
+  let s = 176;
+  s -= 26 * bumpDeg(ad, -52, 15);     // the headland's rocky tip reaches into the mouth
+  s += 13 * bumpDeg(ad, -80, 11);     // a pocket beach under the fort
+  s -= 20 * bumpDeg(ad, -107, 7);     // the church point
+  s -= 18 * bumpDeg(ad, 162, 26);     // the west arm's point
+  s += 10 * Math.sin(ad * D2R * 5 + 0.7) * bumpDeg(ad, 80, 70);
+  const q = bandDeg(ad, -165, -117, 4);
+  return s + (COVE.quay - s) * q;
+}
+// height of the first range of hills, and of the higher ground behind it
+function hillH(ad) {
+  return 50 + 64 * bumpDeg(ad, -144, 46) + 22 * bumpDeg(ad, -100, 16) - 25 * bumpDeg(ad, -52, 17)
+    + 46 * bumpDeg(ad, 168, 42) + 30 * bumpDeg(ad, 80, 70);
+}
+function backH(ad) {
+  return 34 + 58 * bumpDeg(ad, -150, 62) + 30 * bumpDeg(ad, 150, 50) - 22 * bumpDeg(ad, -58, 24);
+}
+
+// terrain height at (x, z); negative under the water
+function coveHeight(x, z) {
+  const r = Math.hypot(x, z);
+  const a = Math.atan2(z, x);
+  let u = (a - COVE.a0) % TAU;
+  if (u < 0) u += TAU;
+  // the two tips: beyond them the coast falls away, so the mouth opens wider with distance
+  const u1 = COVE.span - Math.max(0, r - 150) * 0.0009;
+  const u0 = Math.max(0, r - 190) * 0.0007;
+  const edge = Math.min(sstep(u0, u0 + 0.13, u), sstep(u1, u1 - 0.075, u));
+  if (edge <= 0) return -16;
+  const ad = a / D2R;
+  const d = r - shoreR(ad);
+  let h;
+  if (d < 0) {
+    h = Math.max(-16, d * 0.8);
+  } else {
+    const arc = a * 180;
+    const vil = bandDeg(ad, -166, -114, 6);
+    const beach = bumpDeg(ad, -80, 7);
+    h = hillH(ad) * (1 - Math.exp(-d / (42 + 34 * vil)));
+    h += backH(ad) * sstep(110, 280, d);
+    h *= 0.64 + 0.7 * fbm(arc / 64 + 17, d / 170, 3, 7);      // spurs and gullies down the fall line
+    h += (fbm(arc / 34, d / 60, 2, 19) - 0.5) * 12 * sstep(4, 40, d);
+    h += (1 - vil) * (1 - beach) * 4.2 * sstep(0, 6, d);        // a rocky lip at the waterline
+    if (beach > 0) h *= 1 - 0.7 * beach * (1 - sstep(8, 30, d));
+    if (vil > 0) {
+      // the village bowl: the quay shelf, a steady climb of garden terraces (soft 5 m risers),
+      // then the wooded hills rising steeply behind the top row
+      const shelf = COVE.quayTop + 0.25 * sstep(2, 16, d);
+      const q = Math.max(0, d - 26) * 0.4 / 5, fq = q - Math.floor(q);
+      const ramp = (Math.floor(q) + sstep(0.7, 1.0, fq)) * 5;
+      const cap = shelf + ramp + Math.max(0, d - 125) * 0.9 + (fbm(arc / 30, d / 30, 2, 23) - 0.5) * 3 * sstep(26, 60, d);
+      h += (Math.min(Math.max(h, shelf), cap) - h) * vil;
+    }
+  }
+  return -16 + (h + 16) * edge;
+}
+
+/* ---- shared sky + haze shader code ------------------------------------------------
+   The haze is evaluated per vertex (the sky is smooth, so the varying carries it well) and
+   mixed in linear light before tone mapping, so a fully hazed ridge maps to exactly the sky
+   behind it. The cove's materials are Lambert with a cheap analytic sky ambient standing in
+   for the IBL: the backdrop is matte and far away, and full PBR on it cost ~8 fps at 2x DPR. */
+
+const COVE_SKY_GLSL = /* glsl */`
+uniform vec3 cvZenith;
+uniform vec3 cvMid;
+uniform vec3 cvHorizonCool;
+uniform vec3 cvHorizonWarm;
+uniform vec3 cvSunDir;
+uniform vec2 cvSunH;
+uniform vec3 cvSunColor;
+vec3 coveHorizon(vec2 hz, out float facing) {
+  facing = dot(hz, cvSunH) * 0.5 + 0.5;
+  return mix(cvHorizonCool, cvHorizonWarm, facing * facing * sqrt(facing));
+}
+vec3 coveSky(vec3 d) {
+  float facing;
+  vec3 horizon = coveHorizon(d.xz / max(length(d.xz), 1e-4), facing);
+  float y = d.y;
+  vec3 c = mix(horizon, cvMid, smoothstep(0.0, 0.30, y));
+  c = mix(c, cvZenith, smoothstep(0.20, 0.90, y));
+  if (y < 0.0) c = horizon * (1.0 - 0.18 * smoothstep(0.0, -0.3, y));
+  float s = max(dot(d, cvSunDir), 0.0), s2 = s * s, s4 = s2 * s2, f2 = facing * facing;
+  // (the sun itself sits above every framing: only its glow is drawn)
+  c += cvSunColor * (0.55 * s4 * s4 + 0.22 * f2 * f2 * facing * exp(-abs(y) * 10.0));
+  return c;
+}`;
+
+// vertex: world position (instanced or not), the haze amount, and the sky colour behind it
+const COVE_HAZE_VERT = /* glsl */`
+{
+  vec4 cvW = vec4(transformed, 1.0);
+  #ifdef USE_INSTANCING
+  cvW = instanceMatrix * cvW;
+  #endif
+  cvW = modelMatrix * cvW;
+  vec3 cvV = cvW.xyz - cameraPosition;
+  float cvD = length(cvV);
+  float cvK = max(cvD - 80.0, 0.0);
+  vCoveF = clamp(max(1.0 - exp(-cvK * cvHaze.x), cvHaze.y * smoothstep(420.0, 780.0, cvD))
+    * (1.0 - cvHaze.z * smoothstep(10.0, 220.0, cvW.y)), 0.0, 0.95);
+  vCoveHaze = coveSky(cvV / max(cvD, 1e-3));
+  // the reveal: the cove rises out of the stage navy the moment it is built, instead of popping
+  vCoveHaze = mix(cvBelow, vCoveHaze, cvReveal);
+  vCoveF = mix(1.0, vCoveF, cvReveal);
+}`;
+
+// fragment, after <lights_fragment_maps>: the sky's diffuse light, in place of the IBL
+const COVE_AMBIENT_FRAG = /* glsl */`
+#if defined( RE_IndirectDiffuse )
+{
+  vec3 cvN = inverseTransformDirection(normal, viewMatrix);
+  vec2 cvNh = cvN.xz + vec2(1e-4);
+  vec3 cvAmb = mix(cvAmbGround, cvAmbSky, cvN.y * 0.5 + 0.5)
+    + cvAmbSun * max(dot(cvNh, cvSunH), 0.0);
+  irradiance += PI * cvAmb;
+}
+#endif`;
+
+// moored boats and buoys: heave, roll and pitch from the shared clock, phased by position
+const COVE_BOB_VERT = /* glsl */`
+#ifdef USE_INSTANCING
+{
+  float ph = instanceMatrix[3].x * 0.071 + instanceMatrix[3].z * 0.113;
+  float roll = sin(cvTime * 0.83 + ph) * 0.035;
+  float pitch = sin(cvTime * 0.61 + ph * 1.7) * 0.016;
+  transformed.y += sin(cvTime * 0.57 + ph * 2.3) * 0.07 + transformed.z * roll + transformed.x * pitch;
+}
+#endif`;
+
+// houses. Per instance, aHouse = (facade column + 16 × roof column, top of the ground floor in
+// metres above the base, roof pitch factor, eave overhang factor). The roof's ridge is raised or
+// lowered and its eaves pushed out per house, so no two roofs share a pitch; the wall's facade is
+// worked out per fragment (see COVE_BUILDING_MAP) from how high up the wall it is, in metres.
+const COVE_BUILDING_VERT = /* glsl */`
+#ifdef USE_INSTANCING
+{
+  float cvH = length(instanceMatrix[1].xyz);
+  float cvRc = floor(aHouse.x / 16.0 + 0.01);
+  if (position.y > 1.001) transformed.y = 1.0 + (position.y - 1.0) * aHouse.z;   // ridge (and gable apex)
+  if (aPart > 0.5) {
+    transformed.xz *= aHouse.w;
+    #ifdef USE_MAP
+    vMapUv = vec2((cvRc + 0.03 + 0.94 * uv.x) / 16.0, 0.008 + 0.234 * uv.y);
+    #endif
+  }
+  vFac = vec4(uv.x, transformed.y * cvH, aHouse.x - cvRc * 16.0, aPart);
+  vFacG = vec3(aHouse.y, cvH, cvRc);
+}
+#endif`;
+
+// fragment, in place of <map_fragment>: the ground floor (shopfronts, arcades, doors, the plinth
+// below it) then the upper floors repeating to the eaves, sampled with the gradients of the
+// unwrapped coordinate so the wrap never shows as a seam; then the cheap occlusion a street and an
+// eave give a wall: darker along its foot and in the band under the roof
+const COVE_BUILDING_MAP = /* glsl */`
+#ifdef USE_MAP
+{
+  vec4 cvTex;
+  if (vFac.w > 0.5) {
+    cvTex = texture2D(map, vMapUv);
+  } else {
+    float y = vFac.y, g = vFacG.x, u = (vFac.z + 0.035 + 0.93 * vFac.x) / 16.0;
+    vec2 cd = vec2(u, y * 0.078);
+    vec2 cvUv = y < g
+      ? vec2(u, 0.25 + 0.245 * clamp(1.0 - (g - y) / 4.2, 0.0, 1.0))
+      : vec2(u, 0.502 + 0.496 * fract((y - g) / 6.4));
+    cvTex = textureGrad(map, cvUv, dFdx(cd), dFdy(cd));
+    float cvFlat = 1.0 - step(0.5, abs(vFacG.z - 2.0));   // roof column 2: a flat terrace
+    float cvFoot = smoothstep(0.0, 1.6, y - (g - 4.2));
+    float cvEave = y > vFacG.y ? 1.0 : smoothstep(0.0, mix(1.1, 0.35, cvFlat), vFacG.y - y);
+    cvTex.rgb *= mix(0.6, 1.0, cvFoot) * mix(0.66, 1.0, cvEave);
+    // on a terrace roof the parapet shows as a pale coping band along the top of the wall
+    cvTex.rgb = mix(cvTex.rgb, vec3(0.86, 0.8, 0.7), step(vFacG.y - 0.45, y) * 0.8 * cvFlat);
+  }
+  diffuseColor *= cvTex;
+}
+#endif`;
+
+// terrain: the crown mottling only where something grows, not on rock, sand or paving. Sampled
+// twice, at two scales and turned against each other, so the tile never shows as a repeat.
+const COVE_VEG_MAP = /* glsl */`
+#ifdef USE_MAP
+{
+  vec3 cvA = texture2D(map, vMapUv).rgb;
+  vec3 cvB = texture2D(map, mat2(0.8, -0.6, 0.6, 0.8) * vMapUv * 0.41 + vec2(0.37, 0.71)).rgb;
+  diffuseColor.rgb *= mix(vec3(0.8), cvA * cvB * 2.1, vVeg);
+}
+#endif`;
+
+/* water: Ligurian green-turquoise. Seen steeply (most of the high stops) the harbour shows its own
+   body colour, deep teal out in the basin and turquoise over the shallows; seen at a graze it turns
+   to mirror — the hills, the village's facades along the quay, the sky — as real water does
+   (Schlick's fresnel weighs the two). The water fills most of the frame from the high stops, so
+   everything smooth (the shallows, the haze, the gold pooling toward the low sun) is worked out per
+   vertex on a ring mesh that is dense near the shore; only the fresnel, the mirror and the sun's
+   glitter, which the ripples break up, run per pixel. */
+const WATER_VERT_PARS = COVE_SKY_GLSL + /* glsl */`
+attribute float aShore;
+uniform float cvWaterHaze;
+uniform float cvWarm;
+uniform vec3 cvBelow;
+uniform float cvReveal;
+varying vec3 vCoveW;
+varying float vShore;
+varying vec4 vWHaze;
+varying float vWarmF;`;
+
+// after <project_vertex>
+const WATER_VERT = /* glsl */`
+vCoveW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+vShore = aShore * cvReveal;
+{
+  vec3 cvV = vCoveW - cameraPosition;
+  float cvD = max(length(cvV), 1e-3);
+  vec2 cvDh = cvV.xz / max(length(cvV.xz), 1e-3);
+  float cvFace;
+  vec3 cvHzc = coveHorizon(cvDh, cvFace) * 0.94;
+  float cvS = max(dot(cvV / cvD, cvSunDir), 0.0), cvS2 = cvS * cvS, cvS4 = cvS2 * cvS2, cvF2 = cvFace * cvFace;
+  cvHzc += cvSunColor * (0.55 * cvS4 * cvS4 + 0.2 * cvF2 * cvF2 * cvFace);
+  // (until the cove is revealed the far water fades to the stage navy, as it always did)
+  vWHaze = vec4(mix(cvBelow, cvHzc, cvReveal), 1.0 - exp(-cvWaterHaze * cvWaterHaze * cvD * cvD));
+  // the low sun's gold, pooling on the open water along its own bearing only
+  float cvToSun = max(dot(cvDh, cvSunH), 0.0);
+  cvToSun *= cvToSun; cvToSun *= cvToSun;
+  vWarmF = cvWarm * cvToSun * cvToSun * smoothstep(90.0, 460.0, cvD) * (1.0 - aShore) * cvReveal;
+}`;
+
+const WATER_PARS = COVE_SKY_GLSL + /* glsl */`
+varying vec3 vCoveW;
+varying float vShore;
+varying vec4 vWHaze;
+varying float vWarmF;
+uniform sampler2D cvSilTex;
+uniform vec3 cvDeep;
+uniform vec3 cvShallow;
+uniform vec3 cvGold;
+uniform vec3 cvHillDark;
+uniform vec3 cvHillLit;
+uniform vec3 cvTown;
+uniform vec2 cvTownDir;
+uniform float cvHillAmt;
+uniform float cvReveal;
+float cvHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float cvNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(cvHash(i), cvHash(i + vec2(1.0, 0.0)), f.x), mix(cvHash(i + vec2(0.0, 1.0)), cvHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}`;
+
+// after <emissivemap_fragment> (the perturbed normal is known by then): the water's own colour,
+// the light scattered back up out of it, which is what the steep views see instead of the sky.
+// The seabed shows through it in patches: darker meadows of seagrass, paler sand between.
+const WATER_BODY_FRAG = /* glsl */`
+{
+  float cvNV = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  float cvFr = 0.02 + 0.98 * pow(1.0 - cvNV, 5.0);
+  float cvBed = cvNoise(vCoveW.xz / 38.0) * 0.62 + cvNoise(vCoveW.xz / 13.0 + 7.3) * 0.38;
+  vec3 cvBody = mix(cvDeep, cvShallow, vShore) * mix(vec3(0.62, 0.7, 0.72), vec3(1.12, 1.2, 1.08), smoothstep(0.25, 0.75, cvBed));
+  // (held up even at a graze: low over the water the harbour still reads green, not as sky)
+  totalEmissiveRadiance += cvBody * (1.0 - 0.7 * cvFr) * mix(0.35, 1.0, cvReveal);
+}`;
+
+// after <lights_fragment_maps>: where the reflected ray would meet the ridge, mirror the hill.
+// The harbour is flat, so the reflected ray is the view ray with its climb flipped: its bearing is
+// the view's, its elevation the angle we look down at. The ripples only shimmer the edge (the
+// sideways tilt of the normal map, which is all the camera's roll-free view space shows of it).
+// Along the quay the lowest band of the mirror is the village's facades rather than the woods.
+const WATER_REFL_FRAG = /* glsl */`
+#if defined( USE_ENVMAP ) && defined( RE_IndirectSpecular )
+{
+// the sky it mirrors is graded toward the sea's own green and held down, and warms back to gold
+// only along the sun's bearing: turquoise water under a warm sky, not a milky sheet of the sky
+{
+  vec3 cvVn = normalize(vCoveW - cameraPosition);
+  vec2 cvVd = cvVn.xz / max(length(cvVn.xz), 1e-3);
+  float cvSunw = max(dot(cvVd, cvSunH), 0.0);
+  cvSunw *= cvSunw; cvSunw *= cvSunw; cvSunw *= cvSunw;
+  float cvLum = dot(radiance, vec3(0.3, 0.55, 0.15));
+  vec3 cvGrade = mix(vec3(0.36, 0.9, 0.86), vec3(1.05, 0.8, 0.52), cvSunw);
+  radiance = mix(radiance, cvLum * cvGrade, 0.72) * mix(0.5, 0.75, cvSunw);
+}
+vec3 cvV = vCoveW - cameraPosition;
+float cvVh = max(length(cvV.xz), 1e-3);
+float cvGraze = -cvV.y / cvVh;   // tan of how steeply this water is seen
+if (cvGraze < 0.5) {   // steeper water can only mirror sky (and it is most of the high stops)
+  vec2 cvDh = cvV.xz / cvVh;
+  vec4 cvSil = texture2D(cvSilTex, cvDh * 0.5 + 0.5);   // indexed by direction: no atan
+  float cvDist = max(14.0, cvSil.g * 600.0 - dot(vCoveW.xz, cvDh));
+  float cvHill = cvSil.r * 255.0 / cvDist;
+  float cvRay = cvGraze * (1.0 + 9.0 * geometryNormal.x);
+  float cvM = cvSil.a * cvReveal * (1.0 - smoothstep(cvHill * 0.8, cvHill * 1.05 + 0.004, cvRay));
+  float cvFace;
+  vec3 cvCol = mix(cvHillDark, cvHillLit, cvSil.b);
+  float cvTownW = smoothstep(0.82, 0.93, dot(cvDh, cvTownDir)) * (1.0 - smoothstep(18.0 / cvDist, 26.0 / cvDist, cvRay));
+  cvCol = mix(cvCol, cvTown, cvTownW);
+  cvCol = mix(cvCol, coveHorizon(cvDh, cvFace) * 0.55, 1.0 - exp(-cvDist * 0.0032));
+  radiance = mix(radiance, cvCol * cvHillAmt, cvM);
+}
+}
+radiance *= 1.0 - 0.3 * vShore;
+#endif`;
+
+// before <opaque_fragment>: the sun's own glitter on the ripples (the water takes no highlight from
+// the scene's lights: the fill light would lay a cold streak toward the camera that no sun made),
+// the gold pooling toward it, then the cove's haze
+const WATER_OUT_FRAG = /* glsl */`
+{
+  vec3 cvL = normalize((viewMatrix * vec4(cvSunDir, 0.0)).xyz);
+  float cvSg = max(dot(reflect(-normalize(vViewPosition), normal), cvL), 0.0);
+  float cvSg2 = cvSg * cvSg, cvSg8 = cvSg2 * cvSg2; cvSg8 *= cvSg8;
+  outgoingLight += cvGold * (pow(cvSg, 700.0) * 5.0 + cvSg8 * cvSg8 * cvSg8 * 0.12) * cvReveal;
+  outgoingLight = mix(outgoingLight, cvGold * 0.8, vWarmF);
+  outgoingLight = mix(outgoingLight, vWHaze.rgb, vWHaze.a);
+}`;
+
+function makeCoveUniforms(blank) {
+  return {
+    cvZenith: { value: new THREE.Color(0x0c1d39) },
+    cvMid: { value: new THREE.Color(0x34507a) },
+    cvHorizonCool: { value: new THREE.Color(0x959aab) },
+    cvHorizonWarm: { value: new THREE.Color(0xf2b889) },
+    cvSunDir: { value: SUN.clone() },
+    cvSunH: { value: new THREE.Vector2(SUN.x, SUN.z).normalize() },
+    cvSunColor: { value: new THREE.Color(0xffc184) },
+    cvBelow: { value: new THREE.Color(STAGE_BG) },
+    cvReveal: { value: 0 },   // 0 → 1 as the cove comes in (see stageHarbor)
+    // haze: rate past 80 m, how deep the far range sinks into it, how much thinner it is up high
+    cvHaze: { value: new THREE.Vector3(0.00085, 0.86, 0.3) },
+    // the sky's diffuse light on the cove (radiance, linear): overhead, from below, sunward
+    cvAmbSky: { value: new THREE.Color(0.3, 0.34, 0.4) },
+    cvAmbGround: { value: new THREE.Color(0.07, 0.065, 0.06) },
+    cvAmbSun: { value: new THREE.Color(0.16, 0.1, 0.05) },
+    cvTime: { value: 0 },
+    // water: the silhouette is filled in when the cove is built; blank until then
+    cvSilTex: { value: blank },
+    cvDeep: { value: new THREE.Color(0x0e4f55).multiplyScalar(1.0) },     // the basin's body colour
+    cvShallow: { value: new THREE.Color(0x2aa39a).multiplyScalar(0.62) }, // over the shallows
+    cvGold: { value: new THREE.Color(1.0, 0.72, 0.38) },                  // the low sun on the water
+    cvHillDark: { value: new THREE.Color(0x1a3a22) },
+    cvHillLit: { value: new THREE.Color(0x66753a) },
+    cvTown: { value: new THREE.Color(0xb9825a) },                          // the quay's facades, mirrored
+    cvTownDir: { value: new THREE.Vector2(Math.cos(-140 * D2R), Math.sin(-140 * D2R)) },
+    cvHillAmt: { value: 0.7 },
+    cvWaterHaze: { value: 0.0021 },
+    cvWarm: { value: 0.55 },
+  };
+}
+
+// a MeshLambertMaterial wearing the cove light and haze (and optionally the bob, the facade
+// atlas, or the terrain's vegetation weighting)
+function coveMaterial(params, U, mods = {}) {
+  const mat = new THREE.MeshLambertMaterial(params);
+  mat.fog = false;
+  const key = `cove-${mods.building ? 'b' : ''}${mods.bob ? 'o' : ''}${mods.terrain ? 't' : ''}`;
+  mat.customProgramCacheKey = () => key;
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U);
+    let vs = sh.vertexShader.replace('#include <common>', `#include <common>
+${COVE_SKY_GLSL}
+uniform vec3 cvHaze;
+uniform vec3 cvBelow;
+uniform float cvReveal;
+varying vec3 vCoveHaze;
+varying float vCoveF;
+${mods.bob ? 'uniform float cvTime;' : ''}
+${mods.building ? 'attribute vec4 aHouse;\nattribute float aPart;\nvarying vec4 vFac;\nvarying vec3 vFacG;' : ''}
+${mods.terrain ? 'attribute float aVeg;\nvarying float vVeg;' : ''}`);
+    if (mods.terrain) vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>\nvVeg = aVeg;');
+    if (mods.bob) vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>\n${COVE_BOB_VERT}`);
+    if (mods.building) vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>\n${COVE_BUILDING_VERT}`);
+    sh.vertexShader = vs.replace('#include <project_vertex>', `#include <project_vertex>\n${COVE_HAZE_VERT}`);
+    let fs = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+uniform vec3 cvAmbSky;
+uniform vec3 cvAmbGround;
+uniform vec3 cvAmbSun;
+uniform vec2 cvSunH;
+varying vec3 vCoveHaze;
+varying float vCoveF;
+${mods.terrain ? 'varying float vVeg;' : ''}
+${mods.building ? 'varying vec4 vFac;\nvarying vec3 vFacG;' : ''}`)
+      .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>\n${COVE_AMBIENT_FRAG}`)
+      .replace('#include <opaque_fragment>', 'outgoingLight = mix(outgoingLight, vCoveHaze, vCoveF);\n#include <opaque_fragment>');
+    if (mods.terrain) fs = fs.replace('#include <map_fragment>', COVE_VEG_MAP);
+    if (mods.building) fs = fs.replace('#include <map_fragment>', COVE_BUILDING_MAP);
+    sh.fragmentShader = fs;
+  };
+  return mat;
+}
+
+/* ---- canvas textures ---------------------------------------------------------------- */
+
+// grey canopy mottling, multiplied over the terrain's vertex colours: crown-sized lumps with dark
+// gaps between them, gathered into clumps and thinner clearings (noise, so there is no regular
+// scale pattern of round crowns to pick out)
+function makeCanopyTexture() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const norm = (h) => {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < h.length; i++) { if (h[i] < lo) lo = h[i]; if (h[i] > hi) hi = h[i]; }
+    for (let i = 0; i < h.length; i++) h[i] = (h[i] - lo) / ((hi - lo) || 1);
+    return h;
+  };
+  const crowns = norm(noiseField(S, [[22, 1], [44, 0.5], [88, 0.28]], 4711));
+  const clumps = norm(noiseField(S, [[5, 1], [9, 0.6]], 1717));
+  for (let i = 0; i < S * S; i++) {
+    const k = crowns[i], m = clumps[i];
+    let v = 0.3 + 0.7 * sstep(0.3, 0.72, k);         // a crown top, or the shade between crowns
+    v *= 0.7 + 0.3 * sstep(0.22, 0.68, m);           // the thick of the wood, or a clearing
+    const l = Math.round(clamp(v, 0, 1) * 250);
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = l;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/* The facade atlas: 16 columns of 128 px, one per facade. Each column is three bands, top to
+   bottom: two upper floors (256 px, repeating up the wall), the ground floor and its plinth
+   (128 px: arcades, shopfronts or a plain door), and a roof texture (128 px; only the first four
+   columns are used: terracotta, Ligurian slate, terrace paving, faded tile).                  */
+const FACADE_N = 16;
+const FACADE_WALLS = ['#d9a441', '#e9c878', '#b9553a', '#dc8661', '#e8d8ba', '#dc9e8f', '#d97d40', '#e3b36a',
+  '#c96f4a', '#f0d9a8', '#d4a07a', '#b8664a', '#e8c0a0', '#cfa36b', '#e6c79a', '#c4553f'];
+const FACADE_SHUT = ['#4a6a4c', '#4d6e50', '#3f5c45', '#557a5a', '#5b4636', '#6a7b6e', '#44624a', '#3e5a4a', '#6b5a3e'];
+const FACADE_TRIM = ['#f1e3c4', '#fbf1dc', '#ebd2b2', '#f3dcc0', '#ffffff', '#f6e6da', '#efdcb8'];
+
+function makeFacadeAtlas() {
+  const CW = 128, H = 512;
+  const c = document.createElement('canvas');
+  c.width = CW * FACADE_N; c.height = H;
+  const ctx = c.getContext('2d');
+  const shade = (hex, k) => {
+    const n = parseInt(hex.slice(1), 16);
+    const f = (v) => Math.round(clamp(v * k, 0, 255));
+    return `rgb(${f(n >> 16)},${f((n >> 8) & 255)},${f(n & 255)})`;
+  };
+  for (let col = 0; col < FACADE_N; col++) {
+    const R = rng(1906 + col * 7919);
+    const x0 = col * CW;
+    const wall = FACADE_WALLS[col];
+    const shut = FACADE_SHUT[Math.floor(R() * FACADE_SHUT.length)];
+    const trim = FACADE_TRIM[Math.floor(R() * FACADE_TRIM.length)];
+    const nWin = 2 + Math.floor(R() * 4);               // 2 to 5 windows a floor
+    const style = Math.floor(R() * 3);                   // 0 plain, 1 balconies, 2 arched heads
+    const string = R() < 0.6, quoins = R() < 0.45;
+    const ground = Math.floor(R() * 3);                  // 0 arcade, 1 shopfronts, 2 door + windows
+    // wall and weathering, over the whole column (the stains run down across the floors)
+    ctx.fillStyle = wall;
+    ctx.fillRect(x0, 0, CW, 384);
+    for (let k = 0; k < 260; k++) {
+      ctx.fillStyle = R() < 0.5 ? 'rgba(40,20,0,.06)' : 'rgba(255,255,255,.07)';
+      const s = 2 + R() * 7;
+      ctx.fillRect(x0 + R() * CW, R() * 384, s, s);
+    }
+    for (let k = 0; k < 5; k++) {
+      const sx = x0 + R() * CW, sy = R() * 300;
+      const g = ctx.createLinearGradient(0, sy, 0, sy + 60 + R() * 80);
+      g.addColorStop(0, 'rgba(60,40,20,.13)'); g.addColorStop(1, 'rgba(60,40,20,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(sx, sy, 3 + R() * 6, 140);
+    }
+    // window centres: uneven, a pair sometimes pulled together
+    const mX = 12 + R() * 6, span = CW - mX * 2;
+    const cx = [];
+    for (let w = 0; w < nWin; w++) cx.push(x0 + mX + span * (w + 0.5) / nWin + (R() - 0.5) * span / nWin * 0.34);
+    if (nWin >= 4 && R() < 0.5) { cx[1] -= 3; cx[2] += 3; }
+    const ww = [0, 0, 17, 13, 11, 9][nWin];
+    // upper floors
+    for (let f = 0; f < 2; f++) {
+      const y0 = f * 128;
+      const g = ctx.createLinearGradient(0, y0, 0, y0 + 128);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(70,40,20,.1)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x0, y0, CW, 128);
+      if (string) {   // a painted stringcourse at each floor line
+        ctx.fillStyle = trim;
+        ctx.fillRect(x0, y0 + 122, CW, 6);
+        ctx.fillStyle = 'rgba(0,0,0,.18)';
+        ctx.fillRect(x0, y0 + 121, CW, 1);
+      }
+      const wh = 52, wy = y0 + 34;
+      for (const c0 of cx) {
+        const wx = c0 - ww / 2;
+        ctx.fillStyle = trim;   // painted trompe-l'oeil surround
+        ctx.fillRect(wx - 3, wy - 5, ww + 6, wh + 8);
+        if (style === 2) { ctx.beginPath(); ctx.arc(c0, wy - 3, ww / 2 + 3, Math.PI, 0); ctx.fill(); }
+        ctx.fillStyle = '#221e1b';
+        ctx.fillRect(wx, wy, ww, wh);
+        ctx.fillStyle = 'rgba(170,180,190,.16)';
+        ctx.fillRect(wx, wy, ww, wh * 0.3);
+        const sw = ww * 0.5;
+        const leaves = R() < 0.3 ? [[wx, ww]] : [[wx - sw - 1, sw], [wx + ww + 1, sw]];
+        for (const [sx, sW] of leaves) {
+          ctx.fillStyle = shut;
+          ctx.fillRect(sx, wy, sW, wh);
+          ctx.fillStyle = 'rgba(0,0,0,.25)';
+          for (let s = wy + 3; s < wy + wh; s += 4) ctx.fillRect(sx, s, sW, 1);
+        }
+        ctx.fillStyle = trim;
+        ctx.fillRect(wx - 5, wy + wh + 2, ww + 10, 3);
+        if (style === 1 && (f === 1 || R() < 0.3)) {   // wrought-iron balconies
+          ctx.fillStyle = 'rgba(30,28,26,.85)';
+          ctx.fillRect(wx - 7, wy + wh - 12, ww + 14, 2);
+          for (let b = wx - 7; b <= wx + ww + 7; b += 3) ctx.fillRect(b, wy + wh - 12, 1, 12);
+        }
+      }
+      if (quoins) {   // painted corner stones, alternating long and short
+        for (let q = 0; q < 8; q++) {
+          const long = q % 2 === 0;
+          ctx.fillStyle = shade(trim.length === 7 ? trim : '#f1e3c4', 0.94);
+          ctx.fillRect(x0, y0 + q * 16 + 1, long ? 11 : 7, 14);
+          ctx.fillRect(x0 + CW - (long ? 11 : 7), y0 + q * 16 + 1, long ? 11 : 7, 14);
+        }
+      }
+    }
+    // ground floor, 256..384 (4.2 m); its top meets the first upper floor
+    const G0 = 256;
+    ctx.fillStyle = shade(wall, 0.92);
+    ctx.fillRect(x0, G0, CW, 128);
+    ctx.fillStyle = trim;
+    ctx.fillRect(x0, G0, CW, 7);                         // the cornice over the ground floor
+    ctx.fillStyle = 'rgba(0,0,0,.22)';
+    ctx.fillRect(x0, G0 + 7, CW, 2);
+    ctx.fillStyle = shade(wall, 0.62);                   // rendered plinth
+    ctx.fillRect(x0, G0 + 112, CW, 16);
+    if (ground === 0) {            // arcade: deep arches, a lit café behind
+      const n = 2 + Math.floor(R() * 2);
+      for (let k = 0; k < n; k++) {
+        const ax = x0 + 8 + (CW - 16) * (k + 0.5) / n, aw = (CW - 16) / n - 8;
+        ctx.fillStyle = '#1c1714';
+        ctx.fillRect(ax - aw / 2, G0 + 34, aw, 82);
+        ctx.beginPath(); ctx.arc(ax, G0 + 34, aw / 2, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = 'rgba(255,190,110,.2)';
+        ctx.fillRect(ax - aw / 2 + 3, G0 + 70, aw - 6, 40);
+      }
+    } else if (ground === 1) {     // shopfronts: glazed openings under a fascia
+      const n = 2 + Math.floor(R() * 2);
+      for (let k = 0; k < n; k++) {
+        const sx = x0 + 6 + (CW - 12) * k / n + 3, sW = (CW - 12) / n - 6;
+        ctx.fillStyle = shade(shut, 0.8);
+        ctx.fillRect(sx - 2, G0 + 26, sW + 4, 10);
+        ctx.fillStyle = '#231d18';
+        ctx.fillRect(sx, G0 + 38, sW, 74);
+        ctx.fillStyle = 'rgba(255,205,140,.22)';
+        ctx.fillRect(sx + 2, G0 + 50, sW - 4, 58);
+        ctx.fillStyle = 'rgba(0,0,0,.35)';
+        ctx.fillRect(sx + sW / 2 - 1, G0 + 38, 2, 74);
+      }
+    } else {                        // a green door and two small barred windows
+      const dx = x0 + CW * (0.3 + R() * 0.4);
+      ctx.fillStyle = trim;
+      ctx.fillRect(dx - 11, G0 + 44, 22, 70);
+      ctx.fillStyle = shade(shut, 0.85);
+      ctx.fillRect(dx - 8, G0 + 48, 16, 66);
+      for (const wx of [x0 + 18, x0 + CW - 30]) {
+        if (Math.abs(wx + 6 - dx) < 22) continue;
+        ctx.fillStyle = trim;
+        ctx.fillRect(wx - 3, G0 + 46, 18, 34);
+        ctx.fillStyle = '#221e1b';
+        ctx.fillRect(wx, G0 + 49, 12, 28);
+        ctx.fillStyle = 'rgba(30,28,26,.8)';
+        for (let b = wx + 2; b < wx + 12; b += 3) ctx.fillRect(b, G0 + 49, 1, 28);
+      }
+    }
+  }
+  // roofs, 384..512: terracotta, grey slate, terrace paving, faded tile
+  const ROOFS = [['#a4502f', 'rgba(232,142,92,.2)', 'rgba(66,22,10,.5)'],
+    ['#5f5d5a', 'rgba(200,200,205,.14)', 'rgba(20,20,24,.45)'],
+    ['#c7b08c', 'rgba(255,240,210,.18)', 'rgba(90,70,50,.3)'],
+    ['#b8745a', 'rgba(250,190,150,.2)', 'rgba(80,36,20,.4)']];
+  ROOFS.forEach(([base, lit, dark], k) => {
+    const R = rng(777 + k);
+    const x0 = k * CW, Y0 = 384;
+    ctx.fillStyle = base;
+    ctx.fillRect(x0, Y0, CW, 128);
+    const step = k === 2 ? 16 : 8;
+    for (let y = Y0; y < Y0 + 128; y += step) {
+      ctx.fillStyle = lit;
+      ctx.fillRect(x0, y, CW, 2);
+      ctx.fillStyle = dark;
+      ctx.fillRect(x0, y + step - 2, CW, 2);
+      const off = ((y - Y0) / step) % 2 ? 0 : step * 0.6;
+      for (let x = off; x < CW; x += step + 2) {
+        ctx.fillStyle = dark;
+        ctx.fillRect(x0 + x, y, 1, step - 2);
+        if (R() < 0.14) { ctx.fillStyle = R() < 0.5 ? 'rgba(40,16,8,.22)' : 'rgba(255,220,180,.12)'; ctx.fillRect(x0 + x + 1, y + 1, step + 1, step - 3); }
+      }
+    }
+  });
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+// how far each point of the harbour is from the shore, as a 0..1 turquoise weight: a distance
+// field over the harbour, sampled into the water mesh's vertices (no texture on the GPU)
+function makeShoreField(N) {
+  const S = COVE.mask / N;
+  const land = new Uint8Array(N * N);
+  for (let j = 0; j < N; j++) {
+    const z = -COVE.mask / 2 + (j + 0.5) * S;
+    for (let i = 0; i < N; i++) {
+      const x = -COVE.mask / 2 + (i + 0.5) * S;
+      if (x * x + z * z > 120 * 120 && coveHeight(x, z) > 0) land[j * N + i] = 1;
+    }
+  }
+  // two-pass chamfer distance, in texels, to the nearest land
+  const dist = new Float32Array(N * N);
+  for (let k = 0; k < dist.length; k++) dist[k] = land[k] ? 0 : 1e9;
+  const D2 = Math.SQRT2;
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const k = j * N + i;
+      let d = dist[k];
+      if (i > 0) d = Math.min(d, dist[k - 1] + 1);
+      if (j > 0) {
+        d = Math.min(d, dist[k - N] + 1);
+        if (i > 0) d = Math.min(d, dist[k - N - 1] + D2);
+        if (i < N - 1) d = Math.min(d, dist[k - N + 1] + D2);
+      }
+      dist[k] = d;
+    }
+  }
+  for (let j = N - 1; j >= 0; j--) {
+    for (let i = N - 1; i >= 0; i--) {
+      const k = j * N + i;
+      let d = dist[k];
+      if (i < N - 1) d = Math.min(d, dist[k + 1] + 1);
+      if (j < N - 1) {
+        d = Math.min(d, dist[k + N] + 1);
+        if (i < N - 1) d = Math.min(d, dist[k + N + 1] + D2);
+        if (i > 0) d = Math.min(d, dist[k + N - 1] + D2);
+      }
+      dist[k] = d;
+    }
+  }
+  const field = new Float32Array(N * N);
+  for (let k = 0; k < dist.length; k++) field[k] = Math.pow(clamp(1 - (dist[k] * S) / 140, 0, 1), 1.25);
+  // bilinear lookup at world (x, z)
+  return (x, z) => {
+    const fx = clamp((x + COVE.mask / 2) / S - 0.5, 0, N - 1.001), fz = clamp((z + COVE.mask / 2) / S - 0.5, 0, N - 1.001);
+    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = j * N + i;
+    const a = field[k] + (field[k + 1] - field[k]) * u, b = field[k + N] + (field[k + N + 1] - field[k + N]) * u;
+    return a + (b - a) * v;
+  };
+}
+
+// The sea: a ring mesh, dense across the harbour and toward the shore, sparse out in the haze.
+// UVs match the CircleGeometry it replaces, so the swell tiles exactly as it did.
+function makeWaterGeometry(R) {
+  const RINGS = [22, 44, 64, 84, 100, 115, 130, 144, 157, 170, 183, 197, 212, 230, 250, 275, 305, 340, 385, 440, 520, 620, 750, R];
+  const SEG = 128;
+  const n = 1 + RINGS.length * SEG;
+  const pos = new Float32Array(n * 3), uv = new Float32Array(n * 2), nor = new Float32Array(n * 3);
+  const idx = [];
+  uv[0] = uv[1] = 0.5; nor[2] = 1;
+  for (let k = 0; k < RINGS.length; k++) {
+    for (let i = 0; i < SEG; i++) {
+      const v = 1 + k * SEG + i, a = (i / SEG) * TAU;
+      const x = RINGS[k] * Math.cos(a), y = RINGS[k] * Math.sin(a);
+      pos[v * 3] = x; pos[v * 3 + 1] = y;
+      uv[v * 2] = x / R * 0.5 + 0.5; uv[v * 2 + 1] = y / R * 0.5 + 0.5;
+      nor[v * 3 + 2] = 1;
+    }
+  }
+  for (let i = 0; i < SEG; i++) idx.push(0, 1 + i, 1 + (i + 1) % SEG);
+  for (let k = 0; k < RINGS.length - 1; k++) {
+    const b0 = 1 + k * SEG, b1 = b0 + SEG;
+    for (let i = 0; i < SEG; i++) {
+      const i1 = (i + 1) % SEG;
+      idx.push(b0 + i, b1 + i, b1 + i1, b0 + i, b1 + i1, b0 + i1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('aShore', new THREE.BufferAttribute(new Float32Array(n), 1));   // filled by the cove
+  g.setIndex(idx);
+  return g;
+}
+
+// The ridge line seen from the harbour, per azimuth: what the water reflects near the shore.
+// Stored as a small 2D map indexed by the horizontal direction itself (dir * 0.5 + 0.5), so the
+// water shader looks it up without an atan per pixel; every texel carries its own bearing.
+function makeSilhouetteTexture(N) {
+  const A = 360;
+  const rawH = new Float32Array(A), rawR = new Float32Array(A).fill(300), rawAny = new Float32Array(A);
+  for (let i = 0; i < A; i++) {
+    const a = ((i + 0.5) / A - 0.5) * TAU;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    let best = 0;
+    for (let r = 112; r <= COVE.rOut; r += 8) {
+      const h = coveHeight(r * ca, r * sa);
+      if (h > 0.5) {
+        rawAny[i] = 1;
+        if (h / r > best) { best = h / r; rawH[i] = h; rawR[i] = r; }
+      }
+    }
+  }
+  // Feathered over ±6° of bearing: at the two tips the land stops within a degree, and a mirror
+  // that switched off there drew a hard straight line out across the harbour. The ridge now tapers
+  // to nothing past each tip and the mirror fades with it.
+  const table = new Uint8Array(A * 4);
+  const F = 6;
+  // inside the land, the last few degrees before a tip come down first...
+  const hT = new Float32Array(A);
+  for (let i = 0; i < A; i++) {
+    if (!rawAny[i]) continue;
+    let edge = F + 1;
+    for (let k = 1; k <= F; k++) {
+      if (!rawAny[(i + k) % A] || !rawAny[(i - k + A) % A]) { edge = k; break; }
+    }
+    hT[i] = rawH[i] * (0.35 + 0.65 * sstep(0, F + 1, edge));
+  }
+  for (let i = 0; i < A; i++) {
+    // ...then the ridge and the land flag run on past the tip, tapering away
+    let h = hT[i], r = rawR[i], any = rawAny[i];
+    if (!rawAny[i]) {
+      for (let k = -F; k <= F; k++) {
+        const j = (i + k + A) % A;
+        const w = 1 - Math.abs(k) / (F + 1);
+        if (hT[j] * w > h) { h = hT[j] * w; r = rawR[j]; }
+        any = Math.max(any, rawAny[j] * w);
+      }
+    }
+    const a = ((i + 0.5) / A - 0.5) * TAU;
+    const lit = clamp(Math.cos(a + Math.PI - SUN_AZ) * 0.5 + 0.5, 0, 1);
+    table[i * 4] = clamp(Math.round(h), 0, 255);
+    table[i * 4 + 1] = clamp(Math.round(r / 600 * 255), 0, 255);
+    table[i * 4 + 2] = Math.round(lit * 255);
+    table[i * 4 + 3] = Math.round(sstep(0, 1, any) * 255);
+  }
+  const data = new Uint8Array(N * N * 4);
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const a = Math.atan2((j + 0.5) / N * 2 - 1, (i + 0.5) / N * 2 - 1);
+      const k = Math.min(A - 1, Math.floor((a / TAU + 0.5) * A));
+      data.set(table.subarray(k * 4, k * 4 + 4), (j * N + i) * 4);
+    }
+  }
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/* ---- geometry helpers ----------------------------------------------------------------- */
+
+// icosphere with smooth (radial) normals: reads as a soft lump, not a faceted gem
+// (corners are pushed in and out a little, hashed on position so every copy of a shared
+// corner moves together, which is what stops a crown looking like a cut gem)
+function blobGeo(detail, lump = 0.2) {
+  const g = new THREE.IcosahedronGeometry(1, detail);
+  const p = g.attributes.position, n = g.attributes.normal;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), l = Math.hypot(x, y, z) || 1;
+    n.setXYZ(i, x / l, y / l, z / l);
+    const k = 1 + lump * (hash2(Math.round(x * 997), Math.round(y * 991) * 31 + Math.round(z * 983), 77) * 2 - 1);
+    p.setXYZ(i, x * k, y * k, z * k);
+  }
+  return g;
+}
+
+// non-indexed, uv-less, with a per-vertex colour from fn(color, y, normalY)
+const _pc = new THREE.Color(), _pc2 = new THREE.Color();
+function paint(g, fn) {
+  if (g.index) { const n = g.toNonIndexed(); g.dispose(); g = n; }
+  if (g.attributes.uv) g.deleteAttribute('uv');
+  const p = g.attributes.position, nr = g.attributes.normal;
+  const col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    fn(_pc, p.getY(i), nr.getY(i));
+    col[i * 3] = _pc.r; col[i * 3 + 1] = _pc.g; col[i * 3 + 2] = _pc.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+const flat = (hex) => { const c = new THREE.Color(hex); return (o) => o.copy(c); };
+const shaded = (lo, mid, hi) => {
+  const a = new THREE.Color(lo), b = new THREE.Color(mid), c = new THREE.Color(hi);
+  return (o, y, ny) => (ny >= 0 ? o.copy(b).lerp(c, ny) : o.copy(b).lerp(a, -ny));
+};
+
+// local +x along the arc, local +z facing the harbour
+const yawAt = (a) => Math.atan2(-Math.cos(a), -Math.sin(a));
+
+// a single house, 1 × 1 × 1 walls; the instance matrix sizes it. kind: 0 a hip roof, 1 a gable
+// roof (ridge along the facade, gable ends in the side walls), 2 a flat terrace roof. The roof's
+// ridge sits at 1.15: COVE_BUILDING_VERT rescales that rise and the eaves per house.
+function houseGeometry(kind) {
+  const P = [], N = [], U = [], PART = [];
+  const tri = (v, n, t, part) => { for (let k = 0; k < 3; k++) { P.push(...v[k]); N.push(...n); U.push(...t[k]); PART.push(part); } };
+  const quad = (a, b, c, d, n, part, uvs) => { tri([a, b, c], n, [uvs[0], uvs[1], uvs[2]], part); tri([a, c, d], n, [uvs[0], uvs[2], uvs[3]], part); };
+  const W = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const h = 0.5;
+  quad([-h, 0, h], [h, 0, h], [h, 1, h], [-h, 1, h], [0, 0, 1], 0, W);
+  quad([h, 0, -h], [-h, 0, -h], [-h, 1, -h], [h, 1, -h], [0, 0, -1], 0, W);
+  quad([h, 0, h], [h, 0, -h], [h, 1, -h], [h, 1, h], [1, 0, 0], 0, W);
+  quad([-h, 0, -h], [-h, 0, h], [-h, 1, h], [-h, 1, -h], [-1, 0, 0], 0, W);
+  const o = 0.54, rise = 0.15, top = 1 + rise;
+  const RU = [[0, 0.03], [1, 0.03], [0.7, 0.97], [0.3, 0.97]];
+  if (kind === 2) {
+    // terrace: a slab with the parapet's coping drawn along the wall top (COVE_BUILDING_MAP)
+    quad([-h, 1, h], [h, 1, h], [h, 1, -h], [-h, 1, -h], [0, 1, 0], 1, W);
+  } else if (kind === 1) {
+    const e1 = [-o, 1, o], e2 = [o, 1, o], e3 = [o, 1, -o], e4 = [-o, 1, -o], r1 = [-o, top, 0], r2 = [o, top, 0];
+    const nS = new THREE.Vector3(0, o, rise).normalize().toArray();
+    const nB = new THREE.Vector3(0, o, -rise).normalize().toArray();
+    const GU = [[0, 0.03], [1, 0.03], [1, 0.97], [0, 0.97]];
+    quad(e1, e2, r2, r1, nS, 1, GU);
+    quad(e3, e4, r1, r2, nB, 1, GU);
+    // the gable ends are wall (part 0, sampled by height like the rest of it)
+    tri([[h, 1, h], [h, 1, -h], [h, top, 0]], [1, 0, 0], [[0, 1], [1, 1], [0.5, 1]], 0);
+    tri([[-h, 1, -h], [-h, 1, h], [-h, top, 0]], [-1, 0, 0], [[0, 1], [1, 1], [0.5, 1]], 0);
+  } else {
+    const q = 0.2;
+    const e1 = [-o, 1, o], e2 = [o, 1, o], e3 = [o, 1, -o], e4 = [-o, 1, -o], r1 = [-q, top, 0], r2 = [q, top, 0];
+    const nS = new THREE.Vector3(0, o, rise).normalize().toArray();
+    const nB = new THREE.Vector3(0, o, -rise).normalize().toArray();
+    const nE = new THREE.Vector3(rise, o - q, 0).normalize().toArray();
+    const nW = new THREE.Vector3(-rise, o - q, 0).normalize().toArray();
+    quad(e1, e2, r2, r1, nS, 1, RU);
+    quad(e3, e4, r1, r2, nB, 1, RU);
+    tri([e2, e3, r2], nE, [[0, 0.03], [1, 0.03], [0.5, 0.97]], 1);
+    tri([e4, e1, r1], nW, [[0, 0.03], [1, 0.03], [0.5, 0.97]], 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+  g.setAttribute('aPart', new THREE.Float32BufferAttribute(PART, 1));
+  return g;
+}
+
+// a small lofted hull: L long, B half-beam, freeboard fb; waterline at y = 0, bow toward +x
+function hullGeo(L, B, fb, hullHex, deckHex) {
+  const half = (t) => B * (t < 0.55 ? 0.86 + 0.14 * Math.sin((t / 0.55) * Math.PI / 2)
+    : Math.pow(Math.max(0, 1 - Math.pow((t - 0.55) / 0.45, 2)), 0.62));
+  const sheer = (t) => fb * (0.78 + 0.34 * t * t);
+  // three rows: keel, a soft chine just above the waterline, the sheer
+  const pt = (t, w, s) => {
+    const x = -L / 2 + L * t, hw = Math.max(0.02, half(t));
+    if (w < 0.25) return new THREE.Vector3(x, -0.35 * (1 - t * t * t), s * 0.06 * hw);
+    if (w < 0.75) return new THREE.Vector3(x, 0.08, s * 0.88 * hw);
+    return new THREE.Vector3(x, sheer(t), s * hw);
+  };
+  const side = bothSides((s) => gridGeometry(10, 2, (a, b) => pt(a, b, s), s < 0));
+  const deck = gridGeometry(10, 1, (a, b) => {
+    const t = a, hw = Math.max(0.02, half(t)) - 0.04;
+    return new THREE.Vector3(-L / 2 + L * t, sheer(t) - 0.03, -hw + 2 * hw * b);
+  }, true);
+  const transom = gridGeometry(1, 2, (a, b) => pt(0, b, a < 0.5 ? 1 : -1), true);
+  return [paint(side, flat(hullHex)), paint(deck, flat(deckHex)), paint(transom, flat(hullHex))];
+}
+
+function boxAt(w, h, d, x, y, z, hex, ry = 0) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  if (ry) g.rotateY(ry);
+  g.translate(x, y, z);
+  return paint(g, flat(hex));
+}
+
+/* ---- the cove ------------------------------------------------------------------------ */
+
+function buildHarbor(U, isSmall) {
+  const group = new THREE.Group();
+  group.name = 'harbour';
+  const geos = [], mats = [], texs = [], inst = [];
+  const R = rng(20260930);
+  const col = new THREE.Color();
+  const m4 = new THREE.Matrix4(), qt = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
+  const eul = new THREE.Euler();
+  const add = (mesh) => {
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    group.add(mesh);
+    return mesh;
+  };
+
+  // state the stages share: the houses (the trees keep out of them, the awnings hang off the
+  // waterfront row) and the facade atlas (its anisotropy is set once the renderer is known)
+  let atlas = null;
+  const houses = [];   // [x, z, yaw, w, depth, H, base, variant]
+  const occupied = []; // [x, z, radius] for keeping trees out of the houses
+  const front = [];    // the waterfront row, for the awnings
+  const api = { group, shoreAt: null };
+
+  // Built in three short tasks (the staged init runs one per step) rather than one ~80 ms block
+  // (~250 ms on a throttled phone). The order is fixed, so the seeded layout is too.
+  const stages = [];
+  // 1 · the sky, the land and the far range
+  stages.push(() => {
+    /* sky dome: drawn at the far plane, after everything opaque, so it only fills what is left */
+    const skyGeo = new THREE.SphereGeometry(1, 40, 20);
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms: U,
+      vertexShader: /* glsl */`
+        varying vec3 vDir;
+        void main() {
+          vDir = position;
+          vec4 p = projectionMatrix * vec4((viewMatrix * vec4(position, 0.0)).xyz, 1.0);
+          gl_Position = p.xyww;
+        }`,
+      fragmentShader: COVE_SKY_GLSL + /* glsl */`
+        uniform vec3 cvBelow;
+        uniform float cvReveal;
+        varying vec3 vDir;
+        void main() {
+          vec3 d = normalize(vDir);
+          // well below the horizon (only ever seen from a camera at the waterline) it is the
+          // stage navy, as before the cove; the water's rim, 1 to 2 degrees down, is untouched
+          gl_FragColor = vec4(mix(cvBelow, mix(coveSky(d), cvBelow, smoothstep(-0.04, -0.12, d.y)), cvReveal), 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+      side: THREE.BackSide, depthWrite: false,
+    });
+    const sky = add(new THREE.Mesh(skyGeo, skyMat));
+    sky.frustumCulled = false;
+    sky.renderOrder = 3;   // last of the opaque pass: it only shades what nothing else covered
+    geos.push(skyGeo); mats.push(skyMat);
+
+    /* terrain: a polar grid over the land arc, plus a far hazy range behind it */
+    const canopy = makeCanopyTexture();
+    texs.push(canopy);
+    const terrainMat = coveMaterial({ vertexColors: true, map: canopy }, U, { terrain: true });
+    mats.push(terrainMat);
+    const NA = isSmall ? 200 : 256, NL = isSmall ? 34 : 40;
+    const UNDER = [-30, -10, -2.5];
+    const rows = UNDER.length + NL + 1, cols = NA + 1;
+    const tPos = new Float32Array(cols * rows * 3), tUv = new Float32Array(cols * rows * 2), tD = new Float32Array(cols * rows);
+    let tp = 0;
+    for (let i = 0; i <= NA; i++) {
+      const a = COVE.a0 + COVE.span * (i / NA);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const S = shoreR(((a / D2R + 540) % 360) - 180);
+      for (let j = 0; j < rows; j++) {
+        const d = j < UNDER.length ? UNDER[j] : (COVE.rOut - S) * Math.pow((j - UNDER.length) / NL, 1.7);
+        const r = S + d, x = r * ca, z = r * sa;
+        const h = coveHeight(x, z);
+        tPos[tp * 3] = x; tPos[tp * 3 + 1] = h; tPos[tp * 3 + 2] = z;
+        tUv[tp * 2] = (a * 200) / 64; tUv[tp * 2 + 1] = (h + d * 0.35) / 64;   // arc length at a fixed radius: u must not run up the slope
+        tD[tp] = d;
+        tp++;
+      }
+    }
+    // no stop, transition or free-look ever faces the arc behind the cameras (a ≈ 40°..150°):
+    // its quads are left out of the index (the vertices stay, unreferenced, so nothing shifts)
+    const behind = (a0, a1) => a0 > BEHIND[0] && a1 < BEHIND[1];
+    const tIdx = [];
+    for (let i = 0; i < NA; i++) {
+      if (behind(COVE.a0 + COVE.span * (i / NA), COVE.a0 + COVE.span * ((i + 1) / NA))) continue;
+      for (let j = 0; j < rows - 1; j++) {
+        const A = i * rows + j, B = A + rows, C = A + 1, D = B + 1;
+        tIdx.push(A, B, C, B, D, C);
+      }
+    }
+    const terrain = new THREE.BufferGeometry();
+    terrain.setAttribute('position', new THREE.BufferAttribute(tPos, 3));
+    terrain.setAttribute('uv', new THREE.BufferAttribute(tUv, 2));
+    terrain.setIndex(tIdx);
+    terrain.computeVertexNormals();
+    {
+      const n = terrain.attributes.normal;
+      const tc = new Float32Array(cols * rows * 3), tv = new Float32Array(cols * rows);
+      const C = (hex) => new THREE.Color(hex);
+      const P = {
+        dark: C(0x1b3818), oak: C(0x2a5021), olive: C(0x56703a), bright: C(0x5f8634), blue: C(0x1f4034),
+        rock: C(0x76705f), rockDk: C(0x4a473b), sand: C(0xbba680), pave: C(0xb4a58b), terrace: C(0x5d6a36), earth: C(0x77683f),
+        scrub: C(0x5a6446),
+        seabed: C(0x0d1c26),
+      };
+      const t1 = new THREE.Color(), t2 = new THREE.Color();
+      for (let k = 0; k < tp; k++) {
+        const x = tPos[k * 3], h = tPos[k * 3 + 1], z = tPos[k * 3 + 2], d = tD[k];
+        const ad = Math.atan2(z, x) / D2R;
+        const slope = 1 - n.getY(k);
+        // sampled with height folded in: on a steep face x/z barely move, and x/z-only noise streaks
+        const n1 = fbm((x + h * 0.8) / 95, (z - h * 0.6) / 95, 3, 5);
+        const n2 = vnoise((x - h) / 24, (z + h * 0.7) / 24, 9);
+        const n3 = vnoise((x + h * 1.1) / 9, (z - h * 0.9) / 9, 13);
+        // woodland: holm oak and pine, olive groves lower down, bluer conifers high up
+        t1.copy(P.oak).lerp(P.dark, sstep(0.35, 0.7, n1));
+        t1.lerp(P.olive, sstep(0.62, 0.82, n2) * (1 - sstep(60, 110, h)) * 0.8);
+        t1.lerp(P.bright, sstep(0.72, 0.9, n3) * 0.35);
+        t1.lerp(P.blue, sstep(70, 190, h) * 0.45);
+        // terraces and gardens round the village
+        const vil = bandDeg(ad, -168, -108, 5);
+        const quayB = bandDeg(ad, -165, -117, 2);   // the paving stops where the quay does
+        if (vil > 0) {
+          const terr = vil * sstep(20, 32, d) * (1 - sstep(90, 150, d)) * sstep(0.45, 0.6, n2);
+          t2.copy(P.terrace).lerp(P.earth, sstep(0.55, 0.8, n3));
+          t1.lerp(t2, terr * 0.55);
+          t1.lerp(P.pave, quayB * (1 - sstep(12, 22, d)));
+        }
+        // rock: cliffs, the waterline, the steepest gullies
+        // (only the steepest faces go bare, and even they carry grey-green scrub and some canopy)
+        const rocky = Math.max(sstep(0.72, 0.9, slope) * 0.7, (1 - sstep(2.5, 8, d)) * (1 - sstep(2.5, 6, h)) * (1 - vil)) * (h > -0.2 ? 1 : 0);
+        t2.copy(P.rock).lerp(P.rockDk, n3).lerp(P.scrub, 0.4 * sstep(8, 20, d));
+        t1.lerp(t2, rocky);
+        const beach = bumpDeg(ad, -80, 8) * (1 - sstep(6, 14, d));
+        t1.lerp(P.sand, beach);
+        if (h < -0.4) t1.copy(P.seabed);   // hidden under the water in every normal view
+        tc[k * 3] = t1.r; tc[k * 3 + 1] = t1.g; tc[k * 3 + 2] = t1.b;
+        tv[k] = (1 - rocky * 0.75) * (1 - beach) * (1 - quayB * (1 - sstep(12, 22, d))) * (h > -0.4 ? 1 : 0);
+      }
+      terrain.setAttribute('color', new THREE.BufferAttribute(tc, 3));
+      terrain.setAttribute('aVeg', new THREE.BufferAttribute(tv, 1));
+    }
+    // the far range: a hazy silhouette ~700 m out, open over the mouth
+    const far = (() => {
+      const FA = isSmall ? 120 : 180;
+      const aS = 20 * D2R, aE = 280 * D2R;
+      const fp = [], fu = [], fc = [], fi = [];
+      const fcol = new THREE.Color(0x4d6258);
+      for (let i = 0; i <= FA; i++) {
+        const a = COVE.a0 + aS + (aE - aS) * (i / FA);
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const edge = sstep(0, 0.12, (a - COVE.a0 - aS)) * sstep(0, 0.12, (COVE.a0 + aE - a));
+        const hf = (60 + 150 * fbm(a * 5.2, 3.1, 4, 71) + 60 * bumpDeg(a / D2R, -160, 50)) * edge - 12 * (1 - edge);
+        const ring = [[680, -24], [705, hf * 0.62], [730, hf]];   // rising away from the harbour
+        for (const [r, y] of ring) { fp.push(r * ca, y, r * sa); fu.push(a * 700 / 48, y / 48); fc.push(fcol.r, fcol.g, fcol.b); }
+      }
+      for (let i = 0; i < FA; i++) {
+        if (behind(COVE.a0 + aS + (aE - aS) * (i / FA), COVE.a0 + aS + (aE - aS) * ((i + 1) / FA))) continue;
+        for (let j = 0; j < 2; j++) {
+          const A = i * 3 + j, B = A + 3, C = A + 1, D = B + 1;
+          fi.push(A, B, C, B, D, C);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(fu, 2));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(fc, 3));
+      g.setAttribute('aVeg', new THREE.Float32BufferAttribute(new Float32Array(fp.length / 3).fill(1), 1));
+      g.setIndex(fi);
+      g.computeVertexNormals();
+      return g;
+    })();
+    const landGeo = mergeGeometries([terrain, far], false);
+    terrain.dispose(); far.dispose();
+    geos.push(landGeo);
+    // drawn after the houses, trees and boats standing on it, so early-z skips what they hide
+    add(new THREE.Mesh(landGeo, terrainMat)).renderOrder = 1;
+  });
+
+  // 2 · the village, its gardens and the woods, the shoreline rocks
+  stages.push(() => {
+    /* houses: the waterfront row on the quay, rows stepping up behind, villas on the hills */
+    const groundSpan = (x, z, yaw, w, dp) => {
+      const cx = Math.cos(yaw), sx = Math.sin(yaw);
+      let lo = Infinity, hi = -Infinity;
+      for (const [u, v] of [[0, 0], [-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) {
+        const px = x + u * w * cx + v * dp * sx, pz = z - u * w * sx + v * dp * cx;
+        const h = coveHeight(px, pz);
+        if (h < lo) lo = h;
+        if (h > hi) hi = h;
+      }
+      return [lo, hi];
+    };
+    // a wall of n floors: a 4.2 m ground floor, 3.2 m floors over it, a little cornice above
+    const wallH = (n) => 4.2 + 3.2 * (n - 1) + 0.5;
+    // roof: [kind (0 hip, 1 gable, 2 terrace), atlas roof column (0 tile, 1 slate, 2 paving, 3 faded)]
+    const pickRoof = (pHip = 0.5, pGable = 0.32) => {
+      const k = R();
+      if (k < pHip) return [0, R() < 0.2 ? 1 : (R() < 0.25 ? 3 : 0)];
+      if (k < pHip + pGable) return [1, R() < 0.25 ? 1 : (R() < 0.3 ? 3 : 0)];
+      return [2, 2];
+    };
+    const pushHouse = (x, z, yaw, w, dp, H, variant, maxStep = 7, check = true, roof = pickRoof(), pitch = 0.3 + R() * 0.26) => {
+      const [lo, hi] = groundSpan(x, z, yaw, w, dp);
+      if (lo < 0.6 || hi - lo > maxStep) return false;
+      if (check) for (const o of occupied) {
+        const dx = x - o[0], dz = z - o[1], rr = o[2] + Math.max(w, dp) * 0.45;
+        if (dx * dx + dz * dz < rr * rr) return false;
+      }
+      // [x, z, yaw, w, depth, H, base, variant, roof kind, roof column, ridge rise (m), eaves]
+      houses.push([x, z, yaw, w, dp, H + (hi - lo) + 1.2, lo - 1.2, variant, roof[0], roof[1],
+        dp * 0.5 * pitch, roof[0] === 2 ? 1 : 0.97 + R() * 0.12]);
+      occupied.push([x, z, Math.max(w, dp) * 0.5]);
+      return true;
+    };
+    // the waterfront: one continuous facade of tall houses, stepping in and out along the quay,
+    // three to seven floors, the odd one set back behind a little piazza
+    for (let ad = -163.5; ad < -118;) {
+      const w = 6.4 + R() * 4.8, dp = 10 + R() * 3;
+      const back = R() < 0.12 ? 2.6 + R() * 1.5 : (R() - 0.5) * 3.2;
+      const rc = COVE.front + dp / 2 + back;
+      const a = (ad + (w / 2) / rc / D2R) * D2R;
+      const k = R(), floors = k < 0.12 ? 3 : (k < 0.45 ? 4 : (k < 0.78 ? 5 : (k < 0.94 ? 6 : 7)));
+      const [x, z] = [rc * Math.cos(a), rc * Math.sin(a)];
+      if (pushHouse(x, z, yawAt(a), w, dp, wallH(floors), Math.floor(R() * FACADE_N), 3, false, pickRoof(0.46, 0.36))) {
+        front.push([a, w, rc - dp / 2]);
+      }
+      ad += (w + 0.25) / rc / D2R;
+    }
+    // the rows climbing behind it: lower, looser and staggered, gardens in the gaps
+    const gaps = [];
+    for (let k = 1; k <= 4; k++) {
+      const lo = -163 + k * 2.2 + (k % 2) * 1.6, hi = -117 - k * 2.2;
+      for (let ad = lo; ad < hi;) {
+        const w = 6.5 + R() * 4.5, dp = 8 + R() * 3;
+        const rc = COVE.front + 12 + k * 16 + (R() - 0.5) * 6;
+        const a = (ad + (w / 2) / rc / D2R) * D2R;
+        if (R() < [0, 0.7, 0.5, 0.38, 0.28][k]) {
+          const n = k === 1 ? 3 + Math.floor(R() * 3) : 2 + Math.floor(R() * 3);
+          pushHouse(rc * Math.cos(a), rc * Math.sin(a), yawAt(a) + (R() - 0.5) * 0.14, w, dp, wallH(n), Math.floor(R() * FACADE_N), 7, false);
+        } else {
+          gaps.push([rc * Math.cos(a), rc * Math.sin(a)]);
+        }
+        const gap = 2 + R() * (3 + k * 2.5);
+        if (gap > 5) { const ag = (ad + (w + gap / 2) / rc / D2R) * D2R; gaps.push([rc * Math.cos(ag), rc * Math.sin(ag)]); }
+        ad += (w + gap) / rc / D2R;
+      }
+    }
+    // two old towers standing over the roofs: one mid-village, one above the church
+    for (const [ad, dd] of [[-139.5, 44], [-110.5, 36]]) {
+      const a = ad * D2R, r = shoreR(ad) + dd;
+      pushHouse(r * Math.cos(a), r * Math.sin(a), yawAt(a) + 0.08, 5.4, 5.4, wallH(8), [0, 2, 6, 13][Math.floor(R() * 4)], 9, true, [0, R() < 0.5 ? 1 : 0], 0.95);
+    }
+    // the church, on its point between the village and the headland (the campanile is a prop)
+    const churchA = -107.5 * D2R;
+    const churchR = shoreR(-107.5) + 17;
+    pushHouse(churchR * Math.cos(churchA), churchR * Math.sin(churchA), yawAt(churchA) + Math.PI / 2, 17, 11, 11, 4, 12, true, [1, 0], 0.5);
+    // villas scattered up the hills, on the headland and along the west arm
+    const VILLA_V = [1, 4, 5, 0, 9, 12, 3, 5, 14, 7];
+    for (let tries = 0, n = 0; tries < 1400 && n < (isSmall ? 44 : 62); tries++) {
+      const ad = -212 + R() * 158;
+      const d = 26 + Math.pow(R(), 1.35) * 190;
+      const a = ad * D2R, r = shoreR(ad) + d;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      const h = coveHeight(x, z);
+      if (h < 6 || h > 118) continue;
+      if (vnoise(x / 60, z / 60, 3) < 0.38 && bandDeg(ad, -170, -110, 6) < 0.5) continue;
+      const w = 8 + R() * 6, dp = 8 + R() * 4;
+      if (pushHouse(x, z, yawAt(a) + (R() - 0.5) * 0.5, w, dp, wallH(2 + Math.floor(R() * 2)), VILLA_V[Math.floor(R() * VILLA_V.length)], 5, true, pickRoof(0.45, 0.25))) n++;
+    }
+    // a few cottages round the church
+    for (let k = 0; k < 7; k++) {
+      const ad = -113 + R() * 12, a = ad * D2R, r = shoreR(ad) + 8 + R() * 30;
+      pushHouse(r * Math.cos(a), r * Math.sin(a), yawAt(a) + (R() - 0.5) * 0.4, 6 + R() * 4, 7 + R() * 3, wallH(2 + Math.floor(R() * 2)), Math.floor(R() * FACADE_N), 6);
+    }
+
+    atlas = makeFacadeAtlas();
+    texs.push(atlas);
+    const houseMat = coveMaterial({ map: atlas }, U, { building: true });
+    mats.push(houseMat);
+    // one instanced mesh per roof kind (the walls are the same; the atlas does the rest)
+    for (let kind = 0; kind < 3; kind++) {
+      const list = houses.filter((hs) => hs[8] === kind);
+      if (!list.length) continue;
+      const geo = houseGeometry(kind);
+      const data = new Float32Array(list.length * 4);
+      geo.setAttribute('aHouse', new THREE.InstancedBufferAttribute(data, 4));
+      geos.push(geo);
+      const mesh = new THREE.InstancedMesh(geo, houseMat, list.length);
+      list.forEach(([x, z, yaw, w, dp, H, base, v, , rc, rise, eave], i) => {
+        m4.compose(ps.set(x, base, z), qt.setFromEuler(eul.set(0, yaw, 0)), sc.set(w, H, dp));
+        mesh.setMatrixAt(i, m4);
+        data.set([v + 16 * rc, 5.4, rise / (0.15 * H), eave], i * 4);
+        const l = 0.9 + R() * 0.16, tint = (R() - 0.5) * 0.06;
+        mesh.setColorAt(i, col.setRGB(l * (1 + tint), l, l * (1 - tint)));
+      });
+      inst.push(add(mesh));
+    }
+
+    /* trees: stone pines, cypresses and the broadleaf mass (holm oak, olive).
+       The broadleaf crowns come in four shapes, each a cluster of 3-5 jittered lumps with soft
+       normals and shaded undersides, at two levels of detail: the near slopes the stops look at
+       get round (detail-1) lumps, the far upper slopes the same shapes in coarse (detail-0) ones.
+       Every shape x detail is one instanced draw.                                              */
+    const treeMat = coveMaterial({ vertexColors: true }, U);
+    mats.push(treeMat);
+    const bark = flat(0x4a3a2b);
+    const crownPaint = (lo, mid, hi) => {
+      const a = new THREE.Color(lo), b = new THREE.Color(mid), c = new THREE.Color(hi);
+      return (o, y, ny) => {
+        if (ny >= 0) o.copy(b).lerp(c, ny * 0.85); else o.copy(b).lerp(a, Math.min(1, -ny * 1.2));
+        o.multiplyScalar(0.62 + 0.38 * clamp((y - 1.6) / 4.2, 0, 1));   // darker low in the crown
+      };
+    };
+    const indexed = (g) => { const m = mergeVertices(g); g.dispose(); return m; };
+    const crownShapes = [];
+    for (let k = 0; k < 4; k++) {
+      const RS = rng(5150 + k * 31);
+      const blobs = [[0, 3.0 + RS() * 0.5, 0, 2.6 + RS() * 0.8, 1.9 + RS() * 0.7, 2.4 + RS() * 0.8]];
+      const n = 2 + Math.floor(RS() * 3);
+      for (let j = 0; j < n; j++) {
+        const ang = (j / n) * TAU + RS() * 0.9, dist = 1.2 + RS() * 1.2, s = 1.2 + RS() * 0.9;
+        blobs.push([Math.cos(ang) * dist, 2.4 + RS() * 2.2, Math.sin(ang) * dist, s * (1 + RS() * 0.25), s * (0.72 + RS() * 0.25), s]);
+      }
+      crownShapes.push(blobs);
+    }
+    const leafPaint = crownPaint(0x0c180a, 0x284620, 0x557838);
+    // (near: the main lump round, the smaller ones coarse; far: all coarse)
+    const crownGeo = (blobs, detail) => indexed(mergeGeometries([
+      paint(new THREE.CylinderGeometry(0.15, 0.24, 2.6, 4, 1, true).translate(0, 1.3, 0), bark),
+      ...blobs.map(([x, y, z, sx, sy, sz], j) => paint(blobGeo(j === 0 ? detail : 0, 0.16 + 0.04 * j).scale(sx, sy, sz).translate(x, y, z), leafPaint)),
+    ], false));
+    const leafNear = crownShapes.map((b) => crownGeo(b, 1));
+    const leafFar = crownShapes.map((b) => crownGeo(b, 0));
+    const pinePaint = crownPaint(0x101c0d, 0x29441f, 0x4e6d33);
+    const pineGeo = indexed(mergeGeometries([
+      paint(new THREE.CylinderGeometry(0.2, 0.34, 7.8, 5, 1, true).translate(0, 3.9, 0), bark),
+      paint(blobGeo(1).scale(4.4, 1.3, 4.4).translate(0, 8.4, 0), pinePaint),
+      paint(blobGeo(1).scale(2.6, 0.95, 2.6).translate(2.1, 7.6, 1.2), pinePaint),
+      paint(blobGeo(0).scale(2.0, 0.8, 2.0).translate(-1.9, 7.9, -1.0), pinePaint),
+    ], false));
+    const cyp = new THREE.LatheGeometry([[0.5, 0.2], [0.84, 2.0], [0.8, 4.6], [0.5, 7.6], [0.18, 9.6], [0, 10.3]]
+      .map(([px, py]) => new THREE.Vector2(px, py)), 7);
+    const cypGeo = paint(cyp, (o, y, ny) => o.set(0x142817).lerp(_pc2.set(0x34502e), clamp(y / 10.3, 0, 1) * 0.55 + Math.max(0, ny) * 0.3));
+    geos.push(pineGeo, cypGeo, ...leafNear, ...leafFar);
+    const inHouse = (x, z, pad) => {
+      for (const o of occupied) {
+        const dx = x - o[0], dz = z - o[1], rr = o[2] + pad;
+        if (dx * dx + dz * dz < rr * rr) return true;
+      }
+      return false;
+    };
+    const trees = { pine: [], cyp: [], near: [], far: [] };
+    const NEAR_R = 285;   // past this (from the yacht) a crown is a few pixels: coarse lumps do
+    const plant = (list, x, z, s, sy = s) => {
+      const h = coveHeight(x, z);
+      list.push([x, h - 0.8, z, R() * TAU, s, sy, Math.floor(R() * 4)]);
+    };
+    const plantLeaf = (x, z, s) => plant(Math.hypot(x, z) < NEAR_R ? trees.near : trees.far, x, z, s);
+    const want = isSmall ? { near: 900, far: 700, pine: 90, cyp: 100 } : { near: 1800, far: 1300, pine: 150, cyp: 160 };
+    const full = () => trees.near.length >= want.near && trees.far.length >= want.far;
+    // gardens: a tree or two beside the houses above the waterfront, and in the gaps between them
+    for (const hs of houses) {
+      const rr = Math.hypot(hs[0], hs[1]);
+      if (rr < COVE.front + 14 || R() < 0.3) continue;
+      const off = Math.max(hs[3], hs[4]) * 0.5 + 2.5 + R() * 3, ang = R() * TAU;
+      const x = hs[0] + Math.cos(ang) * off, z = hs[1] + Math.sin(ang) * off;
+      if (coveHeight(x, z) < 2.2 || inHouse(x, z, 1.5)) continue;
+      if (R() < 0.25) plant(trees.pine, x, z, 0.7 + R() * 0.35);
+      else plantLeaf(x, z, 0.5 + R() * 0.5);
+    }
+    for (const [gx, gz] of gaps) {
+      for (let k = 1 + Math.floor(R() * 3); k > 0; k--) {
+        const x = gx + (R() - 0.5) * 6, z = gz + (R() - 0.5) * 6;
+        if (coveHeight(x, z) < 2.2 || inHouse(x, z, 1.2)) continue;
+        if (R() < 0.3) plant(trees.cyp, x, z, 0.8 + R() * 0.25, 0.8 + R() * 0.5);
+        else plantLeaf(x, z, 0.45 + R() * 0.4);
+      }
+    }
+    // the broadleaf mass, planted in clumps, thickest on the lower slopes the cameras see
+    for (let tries = 0; tries < 14000 && !full(); tries++) {
+      const ad = -214 + R() * 172, a = ad * D2R;
+      const d = 2 + Math.pow(R(), 1.8) * 228;
+      const r = shoreR(ad) + d, cx = r * Math.cos(a), cz = r * Math.sin(a);
+      if (fbm(cx / 70, cz / 70, 2, 41) < 0.3) continue;
+      const list = r < NEAR_R ? trees.near : trees.far;
+      if (list.length >= (r < NEAR_R ? want.near : want.far)) continue;
+      for (let k = 3 + Math.floor(R() * 6); k > 0; k--) {
+        const x = cx + (R() - 0.5) * 16, z = cz + (R() - 0.5) * 16;
+        if (coveHeight(x, z) < 1.6 || inHouse(x, z, 2.5)) continue;
+        plantLeaf(x, z, 0.46 + Math.pow(R(), 1.6) * 0.7);
+      }
+    }
+    // stone pines: along the ridgelines and the headland, a few in the village gardens
+    for (let tries = 0; tries < 6000 && trees.pine.length < want.pine; tries++) {
+      const ad = -214 + R() * 172, a = ad * D2R;
+      const d = 6 + R() * 170;
+      const r = shoreR(ad) + d, x = r * Math.cos(a), z = r * Math.sin(a);
+      const h = coveHeight(x, z);
+      if (h < 4 || inHouse(x, z, 4)) continue;
+      const ridge = sstep(20, 60, h) + bumpDeg(ad, -65, 20) * 0.8 + bandDeg(ad, -166, -114, 6) * 0.3;
+      if (R() > ridge * 0.6) continue;
+      plant(trees.pine, x, z, 0.8 + R() * 0.5);
+    }
+    // cypresses: standing beside the villas and the church, in twos and threes
+    for (const hs of houses) {
+      if (trees.cyp.length >= want.cyp) break;
+      if (R() < 0.45) continue;
+      const n = 1 + Math.floor(R() * 3);
+      const off = (Math.max(hs[3], hs[4]) * 0.5 + 3 + R() * 4);
+      const ang = R() * TAU;
+      for (let k = 0; k < n; k++) {
+        const x = hs[0] + Math.cos(ang) * off + k * 2.4 * Math.cos(ang + 1.3), z = hs[1] + Math.sin(ang) * off + k * 2.4 * Math.sin(ang + 1.3);
+        if (coveHeight(x, z) < 2 || inHouse(x, z, 1)) continue;
+        plant(trees.cyp, x, z, 0.8 + R() * 0.25, 0.8 + R() * 0.6);
+      }
+    }
+    // per-tree tint: dark holm oak, the usual green, silver olive, bright young growth
+    const LEAF_TINT = [[0.62, 0.76, 0.6], [0.8, 0.9, 0.74], [1, 1, 1], [1.5, 1.32, 1.45], [1.2, 1.42, 0.8], [0.95, 1.02, 0.78]];
+    const PINE_TINT = [[0.9, 1.0, 0.85], [1.03, 1.04, 0.86], [0.84, 0.92, 0.95], [1.0, 1.0, 1.0]];
+    const instTrees = (list, geo, tints) => {
+      if (!list.length) return;
+      const mesh = new THREE.InstancedMesh(geo, treeMat, list.length);
+      list.forEach(([x, y, z, rot, s, sy], i) => {
+        m4.compose(ps.set(x, y, z), qt.setFromEuler(eul.set(0, rot, 0)), sc.set(s, sy, s));
+        mesh.setMatrixAt(i, m4);
+        const t = tints[Math.floor(R() * tints.length)], l = 0.84 + R() * 0.26;
+        mesh.setColorAt(i, col.setRGB(t[0] * l, t[1] * l, t[2] * l));
+      });
+      inst.push(add(mesh));
+    };
+    for (let k = 0; k < 4; k++) {
+      instTrees(trees.near.filter((t) => t[6] === k), leafNear[k], LEAF_TINT);
+      instTrees(trees.far.filter((t) => t[6] === k), leafFar[k], LEAF_TINT);
+    }
+    instTrees(trees.pine, pineGeo, PINE_TINT);
+    instTrees(trees.cyp, cypGeo, PINE_TINT);
+
+    /* the rocky shore: one continuous, smooth band of weathered rock along the waterline wherever
+       there is no quay or beach, running down under the water; a few rocks awash off the points */
+    const rockMat = coveMaterial({ vertexColors: true }, U);
+    mats.push(rockMat);
+    const ROCK_AD0 = -214, ROCK_AD1 = -41, NU = isSmall ? 260 : 380;
+    const OFF = [-5, -1.6, 0.6, 2.8, 5.2, 8.5];
+    const LIFT = [0, 0.7, 1.35, 1.25, 0.6, -0.35];
+    const rp = [], rc2 = [], ri = [];
+    const rkA = new THREE.Color(0x8b8070), rkB = new THREE.Color(0x5a5349), rkC = new THREE.Color(0xa69478), rkWet = new THREE.Color(0x2f2c27);
+    for (let i = 0; i <= NU; i++) {
+      const ad = ROCK_AD0 + (ROCK_AD1 - ROCK_AD0) * (i / NU), a = ad * D2R;
+      const S = shoreR(ad);
+      // none along the quay or on the beach; lumpy and broken everywhere else
+      const keep = (1 - bandDeg(ad, -166, -114, 2.5)) * (1 - bumpDeg(ad, -80, 10));
+      const amp = keep * (0.55 + 1.6 * fbm(ad / 3.1, 1.7, 3, 61));
+      for (let j = 0; j < OFF.length; j++) {
+        const jit = (vnoise(ad * 1.7, j * 3.1, 67) - 0.5) * 1.6;
+        const r = S + OFF[j] + jit, x = r * Math.cos(a), z = r * Math.sin(a);
+        const g = coveHeight(x, z);
+        const y = j === 0 ? Math.min(g, -2.5) : g + LIFT[j] * amp * (0.7 + 0.6 * vnoise(ad * 2.3, j, 71)) - (amp < 0.05 ? 0.6 : 0);
+        rp.push(x, y, z);
+        const n1 = vnoise(x / 6, z / 6, 73);
+        _pc.copy(rkA).lerp(rkB, n1).lerp(rkC, sstep(0.6, 0.9, vnoise(x / 17, z / 17, 79)) * 0.6);
+        _pc.lerp(rkWet, 1 - sstep(0.1, 0.9, y));   // the dark wet band at the waterline
+        rc2.push(_pc.r, _pc.g, _pc.b);
+      }
+    }
+    const RJ = OFF.length;
+    for (let i = 0; i < NU; i++) {
+      for (let j = 0; j < RJ - 1; j++) {
+        const A = i * RJ + j, B = A + RJ, C = A + 1, D = B + 1;
+        ri.push(A, B, C, C, B, D);
+      }
+    }
+    const bandGeo = new THREE.BufferGeometry();
+    bandGeo.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+    bandGeo.setAttribute('color', new THREE.Float32BufferAttribute(rc2, 3));
+    bandGeo.setIndex(ri);
+    bandGeo.computeVertexNormals();
+    geos.push(bandGeo);
+    add(new THREE.Mesh(bandGeo, rockMat));
+    // rocks awash off the headland tip, the church point and the west arm
+    const awashGeo = indexed(paint(blobGeo(1, 0.3), flat(0xffffff)));
+    geos.push(awashGeo);
+    const awash = [];
+    for (const [c, w, n] of [[-53, 7, isSmall ? 7 : 11], [-107, 4, 4], [162, 9, isSmall ? 5 : 8]]) {
+      for (let k = 0; k < n; k++) {
+        const ad = c + (R() - 0.5) * 2 * w, a = ad * D2R, r = shoreR(ad) - 2 - R() * 9;
+        awash.push([r * Math.cos(a), r * Math.sin(a), 0.8 + Math.pow(R(), 1.5) * 2.2]);
+      }
+    }
+    const awashMesh = new THREE.InstancedMesh(awashGeo, rockMat, awash.length);
+    awash.forEach(([x, z, s], i) => {
+      m4.compose(ps.set(x, -0.35 * s, z), qt.setFromEuler(eul.set(R() * 0.4, R() * TAU, R() * 0.4)), sc.set(s * (1.1 + R() * 0.6), s * (0.55 + R() * 0.3), s * (0.9 + R() * 0.5)));
+      awashMesh.setMatrixAt(i, m4);
+      const l = 0.36 + R() * 0.16;
+      awashMesh.setColorAt(i, col.setRGB(l * 1.06, l, l * 0.9));
+    });
+    inst.push(add(awashMesh));
+  });
+
+  // 3 · the quay and the landmarks, the harbour's boats, what the water needs from the cove
+  stages.push(() => {
+    /* the quay, the mole, the campanile, the fort, the lighthouse, awnings and parasols */
+    const parts = [];
+    const QA0 = -165 * D2R, QA1 = -117 * D2R;
+    parts.push(paint(gridGeometry(48, 1, (u, v) => {
+      const a = QA0 + (QA1 - QA0) * u, r = COVE.quay - 0.4 + (COVE.front - 1 - COVE.quay) * v;
+      return new THREE.Vector3(r * Math.cos(a), COVE.quayTop + 0.04, r * Math.sin(a));
+    }, false), flat(0xc3b59b)));
+    parts.push(paint(gridGeometry(48, 1, (u, v) => {
+      const a = QA0 + (QA1 - QA0) * u, r = COVE.quay - 0.4;
+      return new THREE.Vector3(r * Math.cos(a), -1.6 + (COVE.quayTop + 1.64) * v, r * Math.sin(a));
+    }, false), flat(0x7f7565)));
+    // the mole: a stone pier reaching into the harbour, a green light on its end
+    {
+      const a = -161.5 * D2R, yaw = yawAt(a), r0 = COVE.quay - 44, r1 = COVE.quay;
+      const rc = (r0 + r1) / 2;
+      const g = new THREE.BoxGeometry(6, 3.5, r1 - r0).rotateY(yaw).translate(rc * Math.cos(a), 0.15, rc * Math.sin(a));
+      parts.push(paint(g, flat(0xab9f88)));
+      const ex = (r0 + 1.5) * Math.cos(a), ez = (r0 + 1.5) * Math.sin(a);
+      parts.push(paint(new THREE.CylinderGeometry(0.55, 0.7, 4.2, 8).translate(ex, 1.9 + 2.1, ez), flat(0x3d8a5c)));
+      parts.push(paint(new THREE.CylinderGeometry(0.4, 0.4, 0.7, 8).translate(ex, 1.9 + 4.55, ez), flat(0xf4f0e2)));
+    }
+    // the campanile beside the church
+    {
+      const a = -103.6 * D2R, r = shoreR(-103.6) + 16;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      const g0 = coveHeight(x, z) - 2;
+      const yaw = yawAt(a);
+      const tw = 4.6, th = 27;
+      parts.push(boxAt(tw, th, tw, x, g0 + th / 2, z, 0xc98b55, yaw));
+      for (const f of [0.34, 0.62, 0.86]) parts.push(boxAt(tw + 0.3, 0.4, tw + 0.3, x, g0 + th * f, z, 0xf1e4cc, yaw));
+      parts.push(boxAt(tw + 0.04, 3.4, 2.0, x, g0 + th - 3.2, z, 0x2a211c, yaw));
+      parts.push(boxAt(2.0, 3.4, tw + 0.04, x, g0 + th - 3.2, z, 0x2a211c, yaw));
+      parts.push(boxAt(tw + 0.7, 0.55, tw + 0.7, x, g0 + th + 0.2, z, 0xf1e4cc, yaw));
+      parts.push(boxAt(tw + 0.5, 0.45, tw + 0.5, x, g0 + th - 5.2, z, 0xf1e4cc, yaw));
+      {
+        const fx = Math.sin(yaw), fz = Math.cos(yaw), o = tw / 2 + 0.06, cy0 = g0 + th * 0.74;
+        parts.push(paint(new THREE.CylinderGeometry(1.25, 1.25, 0.1, 18).rotateX(Math.PI / 2).rotateY(yaw).translate(x + fx * o, cy0, z + fz * o), flat(0xf6f1e4)));
+        parts.push(boxAt(0.14, 0.95, 0.06, x + fx * (o + 0.06), cy0 + 0.3, z + fz * (o + 0.06), 0x2a2420, yaw));
+        parts.push(paint(new THREE.BoxGeometry(0.7, 0.12, 0.06).rotateZ(0.5).rotateY(yaw).translate(x + fx * (o + 0.07), cy0 + 0.12, z + fz * (o + 0.07)), flat(0x2a2420)));
+      }
+      parts.push(paint(new THREE.ConeGeometry(3.3, 6.2, 4).rotateY(Math.PI / 4 + yaw).translate(x, g0 + th + 3.5, z), flat(0x8d4a30)));
+    }
+    // the fort on the headland ridge
+    {
+      const ad = -73, a = ad * D2R, r = shoreR(ad) + 50;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      const g0 = coveHeight(x, z) - 5;
+      const yaw = yawAt(a);
+      const cy = Math.cos(yaw), sy = Math.sin(yaw);
+      const at = (u, v) => [x + u * cy + v * sy, z - u * sy + v * cy];
+      parts.push(boxAt(22, 13, 15, x, g0 + 6.5, z, 0xc08858, yaw));
+      parts.push(boxAt(22.3, 3.2, 15.3, x, g0 + 4.2, z, 0x93684a, yaw));   // the weathered base course
+      parts.push(boxAt(22.9, 0.75, 15.9, x, g0 + 12.9, z, 0xe0bd8e, yaw));  // the cornice under the battlements
+      parts.push(boxAt(22.5, 0.4, 15.5, x, g0 + 7.6, z, 0xd8b084, yaw));    // a stone cordon
+      for (let k = -8.5; k <= 8.5; k += 3.4) {   // arrow slits on the harbour face
+        const [wx, wz] = at(k, 7.55);
+        parts.push(boxAt(0.5, 2.4, 0.2, wx, g0 + 9.6, wz, 0x2a1d17, yaw));
+      }
+      const [tx0, tz0] = at(-8, -2);
+      parts.push(boxAt(7.5, 20, 7.5, tx0, g0 + 10, tz0, 0xcd9a68, yaw));
+      parts.push(boxAt(8.3, 0.7, 8.3, tx0, g0 + 19.8, tz0, 0xe0bd8e, yaw));
+      parts.push(boxAt(7.8, 0.35, 7.8, tx0, g0 + 14.6, tz0, 0xd8b084, yaw));
+      for (let k = -10; k <= 10; k += 2.5) {
+        for (const v of [-7.4, 7.4]) { const [mx, mz] = at(k, v); parts.push(boxAt(1.3, 1.3, 0.7, mx, g0 + 13.9, mz, 0xc99662, yaw)); }
+      }
+      for (const u of [-10.9, 10.9]) {
+        for (let v = -5; v <= 5; v += 2.5) { const [mx, mz] = at(u, v); parts.push(boxAt(0.7, 1.3, 1.3, mx, g0 + 13.9, mz, 0xc99662, yaw)); }
+      }
+      for (let k = -3; k <= 3; k += 2) {
+        for (const v of [-3.8, 3.8]) {
+          const [mx, mz] = at(-8 + k, -2 + v); parts.push(boxAt(1, 1.1, 0.6, mx, g0 + 20.7, mz, 0xd4a472, yaw));
+          const [nx, nz] = at(-8 + v, -2 + k); parts.push(boxAt(0.6, 1.1, 1, nx, g0 + 20.7, nz, 0xd4a472, yaw));
+        }
+      }
+    }
+    // the lighthouse on the headland tip
+    {
+      const ad = -55.5, a = ad * D2R, r = shoreR(ad) + 7;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      const g0 = coveHeight(x, z) - 1;
+      // the keeper's house stands behind the tower, landward and lower, end-on to the harbour
+      const kx = x + 6.2 * Math.cos(a), kz = z + 6.2 * Math.sin(a);
+      parts.push(boxAt(3.3, 3.4, 6.4, kx, g0 + 1.2, kz, 0xefe9dc, yawAt(a)));
+      parts.push(boxAt(3.7, 0.35, 6.8, kx, g0 + 3.05, kz, 0xa9553a, yawAt(a)));
+      parts.push(paint(new THREE.CylinderGeometry(1.35, 1.75, 13, 12).translate(x, g0 + 6.5, z), flat(0xf3efe6)));
+      parts.push(paint(new THREE.CylinderGeometry(1.38, 1.4, 1.8, 12).translate(x, g0 + 11.4, z), flat(0xb8392e)));
+      parts.push(paint(new THREE.CylinderGeometry(2.05, 2.05, 0.35, 12).translate(x, g0 + 13.2, z), flat(0x2d2f33)));
+      parts.push(paint(new THREE.CylinderGeometry(1.0, 1.0, 1.9, 10).translate(x, g0 + 14.3, z), flat(0xfff0c0)));
+      parts.push(paint(new THREE.ConeGeometry(1.3, 1.5, 10).translate(x, g0 + 16, z), flat(0x7b2b22)));
+    }
+    // awnings over the quay cafés, and parasols out on the piazza
+    const AWN = [0x3e6b4a, 0xe9dfc8, 0xb5563a, 0x2c3e5c, 0xeae6dc, 0x4f7a58];
+    for (const [a, w, rFace] of front) {
+      if (R() < 0.18) continue;
+      const r = rFace - 1.4;
+      const g = new THREE.BoxGeometry(w * 0.84, 0.14, 2.8).rotateX(0.28).rotateY(yawAt(a)).translate(r * Math.cos(a), COVE.quayTop + 3.4, r * Math.sin(a));
+      parts.push(paint(g, flat(AWN[Math.floor(R() * AWN.length)])));
+    }
+    for (let k = 0; k < (isSmall ? 10 : 16); k++) {
+      const a = (-147 + R() * 15) * D2R, r = COVE.quay + 3.5 + R() * 8;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      parts.push(paint(new THREE.ConeGeometry(1.7, 0.75, 8).translate(x, COVE.quayTop + 2.7, z), flat(R() < 0.7 ? 0xf2ead9 : 0xb5563a)));
+      parts.push(paint(new THREE.CylinderGeometry(0.05, 0.05, 2.4, 4).translate(x, COVE.quayTop + 1.2, z), flat(0x3a3530)));
+    }
+    const propsGeo = mergeGeometries(parts, false);
+    parts.forEach((g) => g.dispose());
+    geos.push(propsGeo);
+    const propsMat = coveMaterial({ vertexColors: true }, U);
+    mats.push(propsMat);
+    add(new THREE.Mesh(propsGeo, propsMat));
+
+    /* harbour life: tenders on the quay, boats on moorings, sailing yachts, two motor yachts */
+    const boatMat = coveMaterial({ vertexColors: true, side: THREE.DoubleSide }, U, { bob: true });
+    mats.push(boatMat);
+    const tenderGeo = mergeGeometries([
+      ...hullGeo(6.4, 1.15, 0.72, 0xe4e2da, 0xcdb996),
+      boxAt(0.8, 0.55, 1.0, 0.4, 0.95, 0, 0xe9e7df),
+      boxAt(0.1, 0.28, 0.9, 0.82, 1.35, 0, 0x2a3440),
+      boxAt(2.4, 0.22, 1.7, -1.6, 0.8, 0, 0x2f4d6e),
+    ], false);
+    const sailGeo = mergeGeometries([
+      ...hullGeo(10.5, 1.7, 1.0, 0xf1f0ea, 0xcdb792),
+      boxAt(3.4, 0.6, 2.1, -0.3, 1.2, 0, 0xf1efe8),
+      boxAt(0.18, 14.5, 0.18, 0.9, 7.9, 0, 0xd9dcdf),
+      boxAt(4.0, 0.14, 0.14, -1.1, 2.55, 0, 0xd9dcdf),
+      boxAt(3.7, 0.36, 0.34, -1.1, 2.8, 0, 0x2c3f63),
+    ], false);
+    const yachtGeo = mergeGeometries([
+      ...hullGeo(16.5, 2.25, 2.1, 0xf2f1ec, 0xc9b28c),
+      boxAt(8.4, 1.7, 3.6, -1.3, 2.9, 0, 0xf4f3ee),
+      boxAt(8.5, 0.62, 3.66, -1.1, 3.05, 0, 0x1f2833),
+      boxAt(5.2, 1.0, 3.1, -2.1, 4.25, 0, 0xf4f3ee),
+      boxAt(4.4, 0.14, 3.3, -2.6, 5.2, 0, 0xf4f3ee),
+      boxAt(0.14, 0.6, 2.8, 0.45, 4.9, 0, 0x1f2833),
+    ], false);
+    const buoyGeo = paint(blobGeo(0, 0).scale(0.42, 0.36, 0.42).translate(0, 0.1, 0), flat(0xffffff));
+    geos.push(tenderGeo, sailGeo, yachtGeo, buoyGeo);
+    const tenders = [], sails = [], yachts = [], buoys = [];
+    const swing = 32 * D2R;   // boats on moorings lie head to the breeze, bows toward the mouth (-32°)
+    // West of about -150° the water lies behind the hero copy (eyebrow and headline, lower left at
+    // 1280-1920 widths, see STOPS[0]): nothing afloat is moored there, so the copy reads on open water.
+    const COPY_W = -150;
+    const HULL_TINT = [[1, 1, 1], [1, 1, 1], [1, 1, 1], [0.66, 0.46, 0.3], [0.62, 0.74, 0.9], [0.95, 0.94, 0.9], [0.55, 0.36, 0.24]];
+    // tenders bow-in along the quay, in a neat row
+    for (let ad = -158; ad < -121; ad += 1.05 + R() * 0.9) {
+      if (Math.abs(ad + 161.5) < 2.4 || ad > -130 || R() < 0.18) continue;   // (the yachts lie at the east end)
+      const s = 0.8 + R() * 0.4, a = ad * D2R, r = COVE.quay - 3.4 * s - 1.2 - R() * 0.8;
+      tenders.push([r * Math.cos(a), r * Math.sin(a), -a + (R() - 0.5) * 0.3, s]);
+    }
+    // boats on moorings, out in the harbour
+    // (thinner in the lane behind the yacht, where the hero looks, so she keeps clear water)
+    for (let tries = 0; tries < 400 && tenders.length < (isSmall ? 36 : 46); tries++) {
+      const ad = COPY_W + R() * 68, a = ad * D2R, r = 104 + Math.sqrt(R()) * 48;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      if (bumpDeg(ad, -140, 14) > R() * 1.4 || tenders.some((t) => (t[0] - x) ** 2 + (t[1] - z) ** 2 < 90)) continue;
+      tenders.push([x, z, swing + (R() - 0.5) * 0.3, 0.9 + R() * 0.3]);
+    }
+    for (let tries = 0; tries < 200 && sails.length < 5; tries++) {
+      const ad = COPY_W + R() * 64, a = ad * D2R, r = 100 + R() * 40;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      if ([...tenders, ...sails].some((t) => (t[0] - x) ** 2 + (t[1] - z) ** 2 < 200)) continue;
+      sails.push([x, z, swing + (R() - 0.5) * 0.25, 0.95 + R() * 0.15]);
+    }
+    // two motor yachts stern-to on the quay's east end (clear of the hero copy), one lying off the headland
+    // (stern-to: bow out into the harbour, square to the quay)
+    for (const [ad, r, yaw] of [[-126.5, COVE.quay - 9.5, 'out'], [-121, COVE.quay - 9.5, 'out'], [-86, 124, swing + 0.1]]) {
+      const a = ad * D2R;
+      yachts.push([r * Math.cos(a), r * Math.sin(a), yaw === 'out' ? Math.PI - a : yaw, 1]);
+    }
+    for (let tries = 0; tries < 300 && buoys.length < 10; tries++) {
+      const ad = COPY_W + R() * 52, a = ad * D2R, r = 88 + R() * 56;
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      if ([...tenders, ...sails, ...yachts].some((t) => (t[0] - x) ** 2 + (t[1] - z) ** 2 < 120)) continue;
+      buoys.push([x, z, 0, 1]);
+    }
+    for (const [list, geo, tinted] of [[tenders, tenderGeo, true], [sails, sailGeo, false], [yachts, yachtGeo, false], [buoys, buoyGeo, false]]) {
+      if (!list.length) continue;
+      const mesh = new THREE.InstancedMesh(geo, boatMat, list.length);
+      list.forEach(([x, z, yaw, s], i) => {
+        m4.compose(ps.set(x, 0, z), qt.setFromEuler(eul.set(0, yaw, 0)), sc.set(s, s, s));
+        mesh.setMatrixAt(i, m4);
+        if (geo === buoyGeo) mesh.setColorAt(i, R() < 0.3 ? col.setRGB(0.85, 0.3, 0.1) : col.setRGB(0.8, 0.8, 0.78));
+        else if (tinted) { const t = HULL_TINT[Math.floor(R() * HULL_TINT.length)]; mesh.setColorAt(i, col.setRGB(t[0], t[1], t[2])); }
+        else mesh.setColorAt(i, col.setRGB(1, 1, 1));
+      });
+      inst.push(add(mesh));
+    }
+
+    /* a tender under way: a slow circuit of the inner harbour (inside the moorings), its wake
+       streaming out astern. The wake is a flat V (alphaMap, fixed to the tender) with foam
+       scrolled through it at the tender's speed, so the foam holds still on the water. */
+    {
+      const L = 28, SW = 20;
+      const wakeAlpha = (() => {
+        const cw = 256, ch = 64, c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        const ctx = c.getContext('2d'), img = ctx.createImageData(cw, ch);
+        for (let j = 0; j < ch; j++) {
+          const across = ((j + 0.5) / ch) * 2 - 1;
+          for (let i = 0; i < cw; i++) {
+            const sAft = 1 - (i + 0.5) / cw;   // 0 at the stern, 1 at the far end
+            const armC = 0.06 + 0.9 * sAft, armW = 0.05 + 0.1 * sAft;
+            const arm = Math.exp(-(((Math.abs(across) - armC) / armW) ** 2));
+            const trail = Math.exp(-((across / (0.09 + 0.22 * sAft)) ** 2)) * 0.85;
+            const a = Math.max(arm * 0.8, trail) * Math.pow(1 - sAft, 1.5) * Math.min(1, sAft * 14 + 0.25);
+            const o = (j * cw + i) * 4;
+            img.data[o] = img.data[o + 1] = img.data[o + 2] = Math.round(clamp(a, 0, 1) * 255);
+            img.data[o + 3] = 255;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+        return new THREE.CanvasTexture(c);
+      })();
+      const wakeFoam = (() => {
+        const S = 128, c = document.createElement('canvas');
+        c.width = c.height = S;
+        const ctx = c.getContext('2d'), img = ctx.createImageData(S, S);
+        const h = noiseField(S, [[8, 1], [16, 0.6], [32, 0.45], [64, 0.3]], 9091);
+        let lo = Infinity, hi = -Infinity;
+        for (const v of h) { if (v < lo) lo = v; if (v > hi) hi = v; }
+        for (let i = 0; i < S * S; i++) {
+          const v = Math.round(255 * (0.35 + 0.65 * sstep(0.35, 0.75, (h[i] - lo) / (hi - lo))));
+          img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+          img.data[i * 4 + 3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+        const t = new THREE.CanvasTexture(c);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(2, 1);
+        return t;
+      })();
+      texs.push(wakeAlpha, wakeFoam);
+      const wakeMat = new THREE.MeshBasicMaterial({
+        color: 0xe6f2ef, map: wakeFoam, alphaMap: wakeAlpha, transparent: true, opacity: 0.62,
+        depthWrite: false, fog: false,
+      });
+      mats.push(wakeMat);
+      const wakeGeo = new THREE.PlaneGeometry(L, SW).rotateX(-Math.PI / 2).translate(-3.1 - L / 2, 0.06, 0);
+      geos.push(wakeGeo);
+      const runner = new THREE.Group();
+      runner.add(new THREE.Mesh(tenderGeo, boatMat));
+      const wake = new THREE.Mesh(wakeGeo, wakeMat);
+      runner.add(wake);
+      runner.visible = false;   // shown once the clock runs (never under reduced motion: it would sit still)
+      group.add(runner);
+      const RC = -128 * D2R, R0 = 95, AX = 50, AR = 10, LAP = 58, SPEED = (TAU * Math.sqrt((AX * AX + AR * AR) / 2)) / LAP;
+      const cx0 = R0 * Math.cos(RC), cz0 = R0 * Math.sin(RC);
+      const tX = -Math.sin(RC), tZ = Math.cos(RC), nX = Math.cos(RC), nZ = Math.sin(RC);
+      api.moveTender = (t) => {
+        const ph = (t / LAP) * TAU;
+        const c = Math.cos(ph), s = Math.sin(ph);
+        runner.position.set(cx0 + tX * AX * c + nX * AR * s, Math.sin(t * 1.3) * 0.05, cz0 + tZ * AX * c + nZ * AR * s);
+        const vx = -tX * AX * s + nX * AR * c, vz = -tZ * AX * s + nZ * AR * c;
+        runner.rotation.set(0, Math.atan2(-vz, vx), Math.sin(t * 1.1) * 0.02);
+        wakeFoam.offset.x = (t * SPEED / L) * 2;
+        runner.visible = true;
+      };
+    }
+
+    // what the water needs: the shore-distance field (read once, into the water mesh) and the
+    // ridge silhouette (a small texture the mirror looks up)
+    api.shoreAt = makeShoreField(isSmall ? 160 : 192);
+    const silTex = makeSilhouetteTexture(96);
+    texs.push(silTex);
+    U.cvSilTex.value = silTex;
+  });
+
+  return Object.assign(api, {
+    stages,
+    maxAniso: (n) => { if (atlas) atlas.anisotropy = n; },
+    update(t) { U.cvTime.value = t; if (api.moveTender) api.moveTender(t); },
+    dispose(blank) {
+      U.cvSilTex.value = blank;
+      inst.forEach((m) => m.dispose());
+      geos.forEach((g) => g.dispose());
+      mats.forEach((m) => m.dispose());
+      texs.forEach((t) => t.dispose());
+      if (group.parent) group.parent.remove(group);
+    },
+  });
+}
+
+
 /* ==================================================================== 7. the voyage path
-   Six stops around the yacht. A stop is a direction on a sphere around a look-at point plus
+   Seven stops around the yacht. A stop is a direction on a sphere around a look-at point plus
    the world width the frame should span — so the same stop composes correctly on a laptop,
    a portrait window and a phone (see `framing`). `p` is progress through the voyage, which
-   voyage.js maps onto page scroll; `card` is the side the info card takes at that stop, and
-   `panX` pushes the yacht off that side so the card never covers her. */
+   voyage.js maps onto page scroll; `card` is the side the info card takes at that stop.
+
+   Each stop is then placed per layout — L a landscape window, T a tall desktop window (the
+   card still floats at the side), N a narrow one (under 900 px: the chips sit at the top and
+   the card docks at the bottom) — as [panX, panY, hz, tilt]:
+     panX, panY  a shift of the lens, in frame fractions: positive moves the yacht right / up.
+                 The camera itself never moves for it. (A portrait frame is 35-57 m tall at the
+                 yacht, and panning the camera by a fraction of that sank it through the water.)
+     hz          where the horizon should sit, in NDC (-1 bottom, 1 top). The camera's height on
+                 its orbit is solved from it, so on every screen the cove shows where the layout
+                 has room for it. null keeps the stop's own `phi` (the deck stop looks down).
+     tilt        degrees the view is pitched up after aiming at the yacht: at the establishing
+                 stops it keeps the village's verticals near-upright.                        */
 
 const STOPS = [
-  // the hero: bow quarter, high and wide, yacht right of centre with the copy at lower left
-  { p: 0.00, zone: 'whole', theta: 0.876, phi: 1.318, look: [-0.4, 3.3, 0], fit: 42, panX: 0.10, panY: 0.15, card: 'right' },
+  // the hero: bow quarter, yacht low and right of the copy, the village across the top
+  { p: 0.00, zone: 'whole', theta: 0.876, phi: 1.318, look: [-0.4, 3.3, 0], fit: 44, card: 'right',
+    L: [0.22, 0.02, 0.42, 6], T: [0.08, 0.02, 0.46, 4], N: [0.02, 0.25, 0.59, 0] },
   // the same quarter, settling in — this is what the "Whole boat" chip scrolls to
-  { p: 0.11, zone: 'whole', theta: 0.815, phi: 1.296, look: [-0.6, 3.2, 0], fit: 34, panX: -0.14, panY: 0.14, card: 'right' },
+  { p: 0.11, zone: 'whole', theta: 0.815, phi: 1.296, look: [-0.6, 3.2, 0], fit: 34, card: 'right',
+    L: [-0.10, 0.146, 0.55, 6], T: [-0.07, 0.07, 0.5, 4], N: [-0.025, 0.12, 0.5, 0] },
   // deck: high over the aft quarter, looking down into the cockpit
-  { p: 0.30, zone: 'deck', theta: -0.817, phi: 1.108, look: [-8.4, 2.1, 0], fit: 28, panX: 0.18, panY: 0.15, card: 'left' },
+  { p: 0.30, zone: 'deck', theta: -0.817, phi: 1.108, look: [-8.4, 2.1, 0], fit: 28, card: 'left',
+    L: [0.18, 0.15, null, 0], T: [0.13, 0.07, null, 0], N: [0.03, 0.155, null, 0] },
   // cabin: level with the saloon glass, three-quarters on
-  { p: 0.48, zone: 'cabin', theta: -0.320, phi: 1.430, look: [-1.6, 3.0, 1.0], fit: 22, panX: -0.22, panY: 0.16, card: 'right' },
+  { p: 0.48, zone: 'cabin', theta: -0.320, phi: 1.430, look: [-1.6, 3.0, 1.0], fit: 22, card: 'right',
+    L: [-0.22, 0.16, 0.50, 0], T: [-0.16, 0.07, 0.40, 0], N: [-0.04, 0.155, 0.50, 0] },
   // engine: down at the waterline on the engine-room vents
-  { p: 0.65, zone: 'engine', theta: -0.885, phi: 1.505, look: [-8.7, 1.4, 1.2], fit: 22, panX: 0.21, panY: 0.17, card: 'left' },
+  { p: 0.65, zone: 'engine', theta: -0.885, phi: 1.505, look: [-8.7, 1.4, 1.2], fit: 22, card: 'left',
+    L: [0.21, 0.12, 0.42, 0], T: [0.15, 0.08, 0.30, 0], N: [0.04, 0.155, 0.42, 0] },
   // hull: beam-on, low, the whole sheer in one line
-  { p: 0.83, zone: 'hull', theta: -0.072, phi: 1.482, look: [0.2, 2.0, 0], fit: 36, panX: -0.14, panY: 0.13, card: 'right' },
+  { p: 0.83, zone: 'hull', theta: -0.072, phi: 1.482, look: [0.2, 2.0, 0], fit: 36, card: 'right',
+    L: [-0.14, 0.13, 0.36, 0], T: [-0.10, 0.06, 0.30, 0], N: [-0.025, 0.155, 0.40, 0] },
   // and out: back to the bow quarter, further off, to close the voyage
-  { p: 1.00, zone: 'whole', theta: 0.876, phi: 1.238, look: [-0.4, 3.4, 0], fit: 40, panX: -0.10, panY: 0.12, card: 'right' },
+  { p: 1.00, zone: 'whole', theta: 0.876, phi: 1.238, look: [-0.4, 3.4, 0], fit: 40, card: 'right',
+    L: [-0.12, 0.02, 0.46, 6], T: [-0.09, 0.02, 0.50, 4], N: [-0.02, 0.20, 0.60, 0] },
 ];
 
 // one array per interpolated track, with theta unwrapped so the camera always takes the
-// short way round between stops
+// short way round between stops (the per-layout tracks are built on resize, see layoutTracks)
 const T_P = STOPS.map((s) => s.p);
 const T_TH = (() => {
   const out = [STOPS[0].theta];
@@ -1290,13 +3063,10 @@ const T_TH = (() => {
   }
   return out;
 })();
-const T_PHI = STOPS.map((s) => s.phi);
 const T_FIT = STOPS.map((s) => s.fit);
 const T_LX = STOPS.map((s) => s.look[0]);
 const T_LY = STOPS.map((s) => s.look[1]);
 const T_LZ = STOPS.map((s) => s.look[2]);
-const T_PX = STOPS.map((s) => s.panX);
-const T_PY = STOPS.map((s) => s.panY);
 
 // Catmull-Rom through the stop values: continuous velocity across a stop, so a steady scroll
 // reads as one continuous move rather than a series of eases.
@@ -1327,6 +3097,26 @@ function framing(fit, aspect) {
     r = (w / 2) / tanH;
   }
   return { r, fov, tanH };
+}
+
+// The per-layout tracks for this window: the lens shift, the tilt and the orbit elevation
+// solved from each stop's horizon target (see STOPS). With the camera aimed at the look-at
+// point and pitched up by `tilt`, the horizon lands at tan(δ - tilt) / tanV + 2·panY in NDC,
+// δ being how far the camera looks down at the yacht; that is solved for δ, so phi = π/2 - δ.
+function layoutTracks(W, aspect) {
+  const lay = W < 900 ? 'N' : (aspect < 1.15 ? 'T' : 'L');
+  const q = STOPS.map((s) => s[lay]);
+  return {
+    px: q.map((v) => v[0]),
+    py: q.map((v) => v[1]),
+    tilt: q.map((v) => v[3] * DEG),
+    phi: STOPS.map((s, k) => {
+      const [, panY, hz, tilt] = q[k];
+      if (hz === null) return s.phi;
+      const tanV = Math.tan(framing(s.fit, aspect).fov * DEG / 2);
+      return Math.PI / 2 - clamp(tilt * DEG + Math.atan((hz - 2 * panY) * tanV), 1.5 * DEG, 40 * DEG);
+    }),
+  };
 }
 
 const MARKERS = {
@@ -1372,10 +3162,19 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(STAGE_BG);
-  scene.fog = new THREE.FogExp2(STAGE_BG, 0.0042);
+  // no scene fog: the yacht sits 25-76 m from the camera, inside the clear air the cove's own haze
+  // leaves before 80 m (a navy fog here tinted her 4-10% toward a colour the scene no longer has)
 
   let envMap = null;
-  const camera = new THREE.PerspectiveCamera(FOV_BASE, 1, 1.2, 420);
+  // far enough for the cove's back ridges (~730 m) seen from the far side of the orbit
+  const camera = new THREE.PerspectiveCamera(FOV_BASE, 1, 1.2, 1400);
+
+  // the harbour cove's shared sky / haze / water uniforms (the cove itself is built in stage 4)
+  const coveBlank = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  coveBlank.needsUpdate = true;
+  const coveU = makeCoveUniforms(coveBlank);
+  let harbor = null;
+  let revealT0 = -1;   // when the cove started rising out of the haze; -1 when not animating
 
   /* ---- lights: late golden hour, raking down the topsides ---- */
   const key = new THREE.DirectionalLight(0xffdfa4, 3.1);
@@ -1398,32 +3197,45 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   scene.add(fill);
 
   /* ---- water ---- */
+  // Out past the cove, so the mouth reads as open sea to the horizon. The rim sits deep in the
+  // haze, so the water no longer needs to fade out: it is opaque, drawn after the hills and
+  // before the sky, and neither pays for pixels the other covers.
+  const WATER_R = 900;
   const waterNormal = makeWaterNormal();
-  const waterAlpha = canvasRadial(512, [[0, '#fff'], [0.4, '#fff'], [1, '#000']]);
+  waterNormal.repeat.set(15 * WATER_R / 150, 15 * WATER_R / 150);   // same ~20 m swell tile
   const waterMat = new THREE.MeshStandardMaterial({
-    color: 0x061324, roughness: 0.30, metalness: 0.0,
-    envMapIntensity: 0.42, normalMap: waterNormal,
-    transparent: true, alphaMap: waterAlpha,
+    color: 0x03121a, roughness: 0.2, metalness: 0.0,
+    envMapIntensity: 0.5, normalMap: waterNormal,
   });
   waterMat.normalScale.set(0.13, 0.13);
-  // Reflections climb toward the horizon: a mirror flattens with distance, which is what
-  // carries the warm sky down onto the far water. Guarded — if the chunk ever changes name
-  // the water simply keeps its flat envMapIntensity.
+  waterMat.fog = false;   // the cove haze below replaces the scene fog on the water
+  waterMat.customProgramCacheKey = () => 'cove-water';
+  // The harbour's own colour, the hills and the quay mirrored near the shore, the sun's gold on the
+  // open water, the same haze as the cove far out. (onBeforeCompile sees the shader before its
+  // #includes are expanded, so the hooks are the include lines themselves.) Guarded: if a hook
+  // ever disappears the water stays a plain dark sea.
   waterMat.onBeforeCompile = (shader) => {
-    if (!shader.fragmentShader.includes('envMapIntensity;')) return;
+    const fs = shader.fragmentShader;
+    if (!['<emissivemap_fragment>', '<lights_fragment_maps>', '<lights_fragment_end>', '<opaque_fragment>']
+      .every((k) => fs.includes(`#include ${k}`))) return;
+    Object.assign(shader.uniforms, coveU);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vHz;')
-      .replace('#include <project_vertex>', '#include <project_vertex>\nvHz = clamp(length(mvPosition.xyz) / 130.0, 0.0, 1.0);');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vHz;')
-      .split('envMapIntensity;').join('envMapIntensity * (1.0 + 1.6 * pow(vHz, 2.2));')
-      // and the low sun's colour pools in the distance, the way it does across a bay at dusk
-      .replace('#include <dithering_fragment>',
-        '#include <dithering_fragment>\ngl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.52, 0.34, 0.22), 0.52 * pow(vHz, 2.2));');
+      .replace('#include <common>', `#include <common>\n${WATER_VERT_PARS}`)
+      .replace('#include <project_vertex>', `#include <project_vertex>\n${WATER_VERT}`);
+    shader.fragmentShader = fs
+      .replace('#include <common>', `#include <common>\n${WATER_PARS}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${WATER_BODY_FRAG}`)
+      .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>\n${WATER_REFL_FRAG}`)
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\nreflectedLight.directSpecular = vec3(0.0);')
+      .replace('#include <opaque_fragment>', `${WATER_OUT_FRAG}\n#include <opaque_fragment>`);
   };
-  const water = new THREE.Mesh(new THREE.CircleGeometry(150, 84), waterMat);
+  const water = new THREE.Mesh(makeWaterGeometry(WATER_R), waterMat);
   water.rotation.x = -Math.PI / 2;
-  water.receiveShadow = true;
+  // no shadow map on the water: its body colour is its own light, not the sun's, so the yacht's
+  // shadow would barely show on it (the contact shadow below grounds her), and skipping the
+  // soft-shadow taps on the biggest surface in the frame is a real saving
+  water.receiveShadow = false;
+  water.renderOrder = 2;   // after the yacht and the cove (0), and the hills (1); the sky is 3
   scene.add(water);
 
   // the warm glow the low sun lays along the horizon, brightest in its own bearing
@@ -1455,8 +3267,9 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     map: glowTex, transparent: true, opacity: 0.85, depthWrite: false, fog: false,
     blending: THREE.AdditiveBlending, side: THREE.BackSide, toneMapped: false,
   });
-  const horizonGlow = new THREE.Mesh(new THREE.CylinderGeometry(132, 132, 30, 48, 1, true), glowMat);
-  horizonGlow.position.y = 7;
+  // out beyond the cove: the hills hide it, so it only burns through the harbour mouth
+  const horizonGlow = new THREE.Mesh(new THREE.CylinderGeometry(520, 520, 90, 64, 1, true), glowMat);
+  horizonGlow.position.y = 12;
   horizonGlow.rotation.y = Math.atan2(SUN.x, SUN.z) - Math.PI;
   horizonGlow.renderOrder = -1;
   scene.add(horizonGlow);
@@ -1509,7 +3322,7 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
      there is no voyage running, and the free-look offset rides on top of it.             */
   let pathP = 0;
   let pathTween = null;
-  let narrow = false;
+  let tracks = null;   // this window's per-layout tracks (layoutTracks), rebuilt on resize
   // loop state, declared up here because resize() and showZone() both wake the loop
   let visible = true, pageVisible = document.visibilityState === 'visible';
   let raf = 0, forceFrame = false, ready = false;
@@ -1523,8 +3336,6 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
 
   const sph = new THREE.Spherical();
   const lookAt = new THREE.Vector3();
-  const vDir = new THREE.Vector3(), vRight = new THREE.Vector3(), vUp = new THREE.Vector3();
-  const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
   function applyCamera() {
     const p = clamp(pathP, 0, 1);
@@ -1532,30 +3343,21 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     const span = T_P[i + 1] - T_P[i];
     const u = span > 0 ? clamp((p - T_P[i]) / span, 0, 1) : 0;
     const theta = crSeg(T_TH, i, u);
-    const phi = clamp(crSeg(T_PHI, i, u), 0.16, 1.535);
+    const phi = clamp(crSeg(tracks.phi, i, u), 0.16, 1.535);
     const fit = Math.max(8, crSeg(T_FIT, i, u));
-    let panX = crSeg(T_PX, i, u), panY = crSeg(T_PY, i, u);
-    // a phone docks the card at the bottom; a tall desktop window has room above and below
-    // her already, so she is pulled back toward the middle of the frame
-    if (narrow) { panX *= 0.18; panY += 0.11; }
-    else if (camera.aspect < 1.15) { panX *= 0.72; panY *= 0.45; }
+    const panX = crSeg(tracks.px, i, u), panY = crSeg(tracks.py, i, u), tilt = crSeg(tracks.tilt, i, u);
 
     const f = framing(fit, camera.aspect);
-    if (Math.abs(camera.fov - f.fov) > 0.02) { camera.fov = f.fov; camera.updateProjectionMatrix(); }
-
+    camera.fov = f.fov;
     sph.set(f.r, clamp(phi + look.ph, 0.14, 1.545), theta + look.th);
     lookAt.set(crSeg(T_LX, i, u), crSeg(T_LY, i, u), crSeg(T_LZ, i, u));
     camera.position.setFromSpherical(sph).add(lookAt);
-
-    // pan in frame fractions: positive panX/panY move the yacht right / up on screen
-    vDir.copy(lookAt).sub(camera.position).normalize();
-    vRight.crossVectors(vDir, WORLD_UP).normalize();
-    vUp.crossVectors(vRight, vDir).normalize();
-    const frameW = 2 * f.r * f.tanH;
-    const dx = -panX * frameW, dy = -panY * (frameW / camera.aspect);
-    camera.position.addScaledVector(vRight, dx).addScaledVector(vUp, dy);
-    lookAt.addScaledVector(vRight, dx).addScaledVector(vUp, dy);
     camera.lookAt(lookAt);
+    if (tilt) camera.rotateX(tilt);
+    // the pan is a shift of the lens (positive panX / panY move the yacht right / up): the frame
+    // slides across the image plane and the camera stays on its orbit, always above the water.
+    // (setViewOffset also brings the projection up to date with the fov above.)
+    camera.setViewOffset(W, H, -panX * W, panY * H, W, H);
   }
 
   /* ---- free-look: a drag adds an orbital offset that eases back to neutral ---- */
@@ -1708,16 +3510,19 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   // the priming frame is drawn at DPR 1 and the real ratio comes in on the frame after: it is
   // hidden behind the loader, and it takes three quarters of the pixels out of the first paint
   let dprPrime = true;
+  // The pixel ratio is capped at 1.5 (the cove is a lot of fill at 2x), and steps down a further
+  // quarter at a time, to 1, if a steady scroll keeps missing frames (see perfSample).
+  let dprCap = 1.5;
   function resize() {
     if (disposed) return;
     W = Math.max(1, stageEl.clientWidth);
     H = Math.max(1, stageEl.clientHeight);
-    narrow = W < 900;
-    renderer.setPixelRatio(dprPrime ? 1 : Math.min(window.devicePixelRatio || 1, W < 768 ? 1.5 : 2));
+    renderer.setPixelRatio(dprPrime ? 1 : Math.min(window.devicePixelRatio || 1, dprCap));
     renderer.setSize(W, H, false);
     labelRenderer.setSize(W, H);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
+    tracks = layoutTracks(W, camera.aspect);
     forceFrame = true;
     nudge();
     if (ready) loop();
@@ -1733,6 +3538,18 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
   const onVis = () => { pageVisible = document.visibilityState === 'visible'; if (pageVisible) loop(); };
   document.addEventListener('visibilitychange', onVis);
 
+  /* ---- adaptive resolution: a rolling window of frame times; if its 90th percentile is over
+     19 ms (dropping frames at 60 Hz), the next frames render with fewer pixels ---- */
+  const perfWin = [];
+  function perfSample(ms) {
+    if (ms < 4 || ms > 100 || dprCap <= 1 || (window.devicePixelRatio || 1) <= 1) return;
+    perfWin.push(ms);
+    if (perfWin.length < 90) return;
+    const p90 = perfWin.slice().sort((a, b) => a - b)[80];
+    perfWin.length = 0;
+    if (p90 > 19) { dprCap = Math.max(1, dprCap - 0.25); window.setTimeout(resize, 0); }   // (not from inside the frame)
+  }
+
   /* ---- render loop ---- */
   const raycaster = new THREE.Raycaster();
   const tmp = new THREE.Vector3();
@@ -1747,8 +3564,10 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     // markers. A page opened in a background tab would otherwise sit on the loader
     // with no markers until it was focused.
     const gated = !visible || !pageVisible;
-    const dt = Math.min(clock.getDelta(), 1 / 20);
+    const rawDt = clock.getDelta();
+    const dt = Math.min(rawDt, 1 / 20);
     if (gated && !firstFrame && !forceFrame) return;
+    if (!gated && !firstFrame && !reducedMotion) perfSample(rawDt * 1000);
     forceFrame = false;
     const t = clock.getElapsedTime();
     frame++;
@@ -1762,6 +3581,12 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
       boat.position.y = Math.sin(t * 0.55) * 0.035;
       boat.rotation.z = Math.sin(t * 0.43) * 0.0045;
       boat.rotation.x = Math.sin(t * 0.33) * 0.0026;
+    }
+    if (harbor && !reducedMotion) harbor.update(t);   // the moored boats ride the same clock
+    if (revealT0 >= 0) {   // the cove rising out of the haze once it is built (~1.2 s, then idle)
+      const k = Math.min(1, (performance.now() - revealT0) / 1200);
+      coveU.cvReveal.value = k * k * (3 - 2 * k);
+      if (k >= 1) revealT0 = -1;
     }
     if (!reducedMotion) {
       waterNormal.offset.x = t * 0.0075;
@@ -1834,7 +3659,7 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
 
   function stageEnv() {
     if (disposed) return;
-    envMap = buildEnvironment(renderer);
+    envMap = buildEnvironment(renderer, coveU);
     scene.environment = envMap;
     nextStep(stageYacht);
   }
@@ -1849,6 +3674,30 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
     scene.add(boat);
     buildMarkers();
     if (pendingZone) { const z = pendingZone; pendingZone = null; showZone(z); }
+    nextStep(stageHarbor);
+  }
+
+  // the cove is scenery: if it ever fails to build, the yacht still sails on open water
+  function stageHarbor() {
+    if (disposed) return;
+    try {
+      if (!harbor) harbor = buildHarbor(coveU, isSmall);
+      harbor.stages.shift()();
+      if (harbor.stages.length) { nextStep(stageHarbor); return; }
+      harbor.maxAniso(Math.min(8, maxAniso));
+      scene.add(harbor.group);
+      // bake the turquoise shallows into the water's vertices (local x, y → world x, -z)
+      const wp = water.geometry.attributes.position, ws = water.geometry.attributes.aShore;
+      for (let i = 0; i < wp.count; i++) ws.array[i] = harbor.shoreAt(wp.getX(i), -wp.getY(i));
+      ws.needsUpdate = true;
+      // fade it in unless nobody would see the fade (reduced motion, a hidden or off-screen stage)
+      if (reducedMotion || !visible || !pageVisible) coveU.cvReveal.value = 1;
+      else revealT0 = performance.now();
+    } catch (err) {
+      console.error('[aBeam] harbour backdrop failed to build', err);
+      if (harbor) harbor.dispose(coveBlank);
+      harbor = null;
+    }
     nextStep(stageFirstFrame);
   }
 
@@ -1888,6 +3737,10 @@ export function initBoat({ stageEl, panelEl, chipsEl, hotspots, reducedMotion, u
       c.removeEventListener('mouseleave', d);
     });
 
+    // the cove first: its instanced meshes and uniform-bound textures are not reachable by the
+    // traversal below, which then sweeps up everything else
+    if (harbor) { harbor.dispose(coveBlank); harbor = null; }
+    coveBlank.dispose();
     const seenGeo = new Set(), seenMat = new Set(), seenTex = new Set();
     scene.traverse((o) => {
       if (o.geometry && !seenGeo.has(o.geometry)) { seenGeo.add(o.geometry); o.geometry.dispose(); }
