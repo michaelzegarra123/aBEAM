@@ -176,7 +176,8 @@ if (form) {
       }
     });
     if (firstBad) {
-      setStatus(`${COPY_UI.formErrorSummary} ${missing.join(', ')}.`, 'is-error');
+      const names = missing.map((n) => n.replace(/[?.:]+$/, '')).join(', ');
+      setStatus(`${COPY_UI.formErrorSummary} ${names}.`, 'is-error');
       firstBad.focus();
       return;
     }
@@ -236,7 +237,7 @@ try {
    `js-reveal` is set on <html> by the inline script in index.html, before the first paint and
    never under reduced motion, so the stylesheet only ever hides a heading when this observer
    is certain to show it again. */
-const heads = $$('.section-head');
+const heads = $$('.section-head, .reveal');
 if (document.documentElement.classList.contains('js-reveal')) {
   if ('IntersectionObserver' in window) {
     const revealIO = new IntersectionObserver((entries) => {
@@ -251,6 +252,65 @@ if (document.documentElement.classList.contains('js-reveal')) {
     heads.forEach((h) => h.classList.add('is-in'));
   }
 }
+
+/* ---------- Scrollspy: the header link for the section in view ---------- */
+const navLinks = $$('.site-nav a[href^="#"]');
+// Every section below the hero belongs to the nearest nav entry above it (the value band,
+// turnaround and who-we-work-with sit under Services; trust under Marinas).
+const navFor = new Map(navLinks.map((a) => [a.getAttribute('href').slice(1), a]));
+let owner = null;
+const spyTargets = $$('main > section[id]').map((el) => {
+  if (navFor.has(el.id)) owner = navFor.get(el.id);
+  return { a: owner, el };
+}).filter((x) => x.a);
+if (spyTargets.length && 'IntersectionObserver' in window) {
+  const visible = new Map();
+  const mark = () => {
+    // the topmost section that occupies the reading band wins
+    let best = null;
+    spyTargets.forEach((t) => {
+      if (!visible.get(t.el)) return;
+      const top = t.el.getBoundingClientRect().top;
+      if (!best || top > best.top) best = { a: t.a, top };
+    });
+    navLinks.forEach((a) => {
+      if (best && a === best.a) a.setAttribute('aria-current', 'true');
+      else a.removeAttribute('aria-current');
+    });
+  };
+  const spyIO = new IntersectionObserver((entries) => {
+    entries.forEach((e) => visible.set(e.target, e.isIntersecting));
+    mark();
+  }, { rootMargin: '-35% 0px -60% 0px', threshold: 0 });
+  spyTargets.forEach((t) => spyIO.observe(t.el));
+}
+
+/* ---------- "Request this": a service link starts the request text ---------- */
+const notesEl = $('#notes');
+let lastPrefill = '';
+document.addEventListener('click', (ev) => {
+  const link = ev.target.closest('a[data-request]');
+  if (!link || !notesEl) return;
+  const text = link.dataset.request || '';
+  const current = notesEl.value.trim();
+  // never overwrite what someone has already typed; only replace our own earlier prefill
+  if (!current || current === lastPrefill.trim()) {
+    notesEl.value = text;
+    lastPrefill = text;
+  }
+  const wrap = notesEl.closest('.field');
+  if (wrap) {
+    wrap.classList.remove('is-prefilled');
+    void wrap.offsetWidth;
+    wrap.classList.add('is-prefilled');
+  }
+  // after the anchor scroll, put the caret at the end of the started sentence
+  window.setTimeout(() => {
+    notesEl.focus({ preventScroll: true });
+    const end = notesEl.value.length;
+    try { notesEl.setSelectionRange(end, end); } catch (err) { /* not a text control */ }
+  }, reducedMotion ? 0 : 450);
+});
 
 /* ---------- 3D boat + the scroll voyage ---------- */
 const voyageEl = $('#voyage');

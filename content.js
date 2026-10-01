@@ -18,7 +18,7 @@ export const CONFIG = {
   smsBody: "Hi aBeam, it's [name]. [Boat name] at [marina], slip [slip]. We need: [what the boat needs]. By [date/time].",
 
   // Pricing. The page renders "Starting at $<startingPrice> per request".
-  // The brief's anchor range is $75–150 depending on boat length.
+  // Shown as "typically $low–high depending on scope" in Pricing and the FAQ.
   startingPrice: 75,
   priceRangeLow: 75,
   priceRangeHigh: 150,
